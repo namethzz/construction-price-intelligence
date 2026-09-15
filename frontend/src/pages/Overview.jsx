@@ -6,6 +6,7 @@ import {
   ArrowUpRight,
   Info,
   Check,
+  MapPin,
 } from "lucide-react";
 import {
   AreaChart,
@@ -16,6 +17,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+
 import { priceData, materialCatalog } from "../data.js";
 import {
   PageHeader,
@@ -31,13 +33,16 @@ function getMaterialPrice(row, materialId) {
 
 function formatPrice(value) {
   if (!Number.isFinite(value)) return "-";
-  return `฿${value.toLocaleString("th-TH", { maximumFractionDigits: 2 })}`;
+
+  return `฿${value.toLocaleString("th-TH", {
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 export default function Overview({ navigate }) {
   const [selectedMaterialId, setSelectedMaterialId] = useState("04");
-  const [selectedMonths, setSelectedMonths] = useState(
-    () => priceData.slice(-9).map((row) => row.key)
+  const [selectedMonths, setSelectedMonths] = useState(() =>
+    priceData.slice(-9).map((row) => row.key)
   );
   const [monthMenuOpen, setMonthMenuOpen] = useState(false);
 
@@ -83,22 +88,43 @@ export default function Overview({ navigate }) {
   return (
     <>
       <PageHeader
-        eyebrow="MARKET OVERVIEW • 14 SEP 2026"
-        title="ตลาดวัสดุก่อสร้างวันนี้"
-        description="ภาพรวมราคา แนวโน้ม และสัญญาณที่มีผลต่อราคาวัสดุก่อสร้างในประเทศไทย"
+        eyebrow="BANGKOK PILOT • MARKET OVERVIEW"
+        title="ตลาดวัสดุก่อสร้างในกรุงเทพมหานคร"
+        description="ภาพรวมราคา แนวโน้ม และสัญญาณของวัสดุก่อสร้าง 21 กลุ่มในพื้นที่กรุงเทพมหานคร"
         action={
           <button className="outline-btn" onClick={() => navigate("data")}>
-            <RefreshCw size={15} /> อัปเดตข้อมูล
+            <RefreshCw size={15} />
+            อัปเดตข้อมูล
           </button>
         }
       />
 
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "10px 13px",
+          marginBottom: 16,
+          borderRadius: 12,
+          background: "rgba(148,163,184,.08)",
+          fontSize: 13,
+        }}
+      >
+        <MapPin size={16} />
+        <strong>พื้นที่นำร่อง:</strong>
+        <span>กรุงเทพมหานคร</span>
+        <span style={{ opacity: 0.55 }}>
+          • ระยะปัจจุบันยังไม่รวมปริมณฑลและจังหวัดอื่น
+        </span>
+      </div>
+
       <div className="stats-grid">
         <StatCard
-          label="ดัชนีราคาวัสดุ"
-          value="112.4"
-          change="+1.8%"
-          note="เทียบเดือนก่อน"
+          label="พื้นที่วิเคราะห์"
+          value="กรุงเทพฯ"
+          change="Pilot Area"
+          note="พื้นที่นำร่องของระบบ"
           positive
         />
 
@@ -118,7 +144,7 @@ export default function Overview({ navigate }) {
           label="วัสดุที่ติดตาม"
           value={`${materialCatalog.length} กลุ่ม`}
           change="01–21"
-          note="เลือกดูได้จากกราฟ"
+          note="วัสดุก่อสร้างเชิงพาณิชย์"
           positive
         />
 
@@ -126,7 +152,7 @@ export default function Overview({ navigate }) {
           label="เดือนที่เลือก"
           value={`${selectedMonths.length} เดือน`}
           change={selectedMonths.length > 1 ? "หลายเดือน" : "1 เดือน"}
-          note="เลือกเดือนได้อย่างอิสระ"
+          note="เลือกช่วงข้อมูลได้"
           positive
         />
       </div>
@@ -137,7 +163,7 @@ export default function Overview({ navigate }) {
             <div>
               <h2>แนวโน้มราคา {selectedMaterial.name}</h2>
               <span>
-                {selectedMaterial.unit} • เลือกอยู่ {selectedMonths.length} เดือน
+                กรุงเทพมหานคร • {selectedMaterial.unit} • {selectedMonths.length} เดือน
               </span>
             </div>
 
@@ -153,9 +179,7 @@ export default function Overview({ navigate }) {
               <select
                 className="select-btn"
                 value={selectedMaterialId}
-                onChange={(event) =>
-                  setSelectedMaterialId(event.target.value)
-                }
+                onChange={(event) => setSelectedMaterialId(event.target.value)}
                 aria-label="เลือกวัสดุก่อสร้าง"
               >
                 {materialCatalog.map((material) => (
@@ -187,8 +211,8 @@ export default function Overview({ navigate }) {
                     padding: 12,
                     borderRadius: 14,
                     background: "var(--card-bg, #fff)",
-                    border: "1px solid rgba(148, 163, 184, .25)",
-                    boxShadow: "0 18px 45px rgba(15, 23, 42, .16)",
+                    border: "1px solid rgba(148,163,184,.25)",
+                    boxShadow: "0 18px 45px rgba(15,23,42,.16)",
                   }}
                 >
                   <div
@@ -199,41 +223,23 @@ export default function Overview({ navigate }) {
                       marginBottom: 10,
                     }}
                   >
-                    <button
-                      className="text-btn"
-                      type="button"
-                      onClick={() => selectLatestMonths(3)}
-                    >
+                    <button className="text-btn" type="button" onClick={() => selectLatestMonths(3)}>
                       3 เดือนล่าสุด
                     </button>
-                    <button
-                      className="text-btn"
-                      type="button"
-                      onClick={() => selectLatestMonths(6)}
-                    >
+                    <button className="text-btn" type="button" onClick={() => selectLatestMonths(6)}>
                       6 เดือนล่าสุด
                     </button>
-                    <button
-                      className="text-btn"
-                      type="button"
-                      onClick={() => selectLatestMonths(9)}
-                    >
+                    <button className="text-btn" type="button" onClick={() => selectLatestMonths(9)}>
                       9 เดือนล่าสุด
                     </button>
                     <button
                       className="text-btn"
                       type="button"
-                      onClick={() =>
-                        setSelectedMonths(priceData.map((row) => row.key))
-                      }
+                      onClick={() => setSelectedMonths(priceData.map((row) => row.key))}
                     >
                       ทั้งหมด
                     </button>
-                    <button
-                      className="text-btn"
-                      type="button"
-                      onClick={() => setSelectedMonths([])}
-                    >
+                    <button className="text-btn" type="button" onClick={() => setSelectedMonths([])}>
                       ล้าง
                     </button>
                   </div>
@@ -255,6 +261,7 @@ export default function Overview({ navigate }) {
                         }}
                       >
                         <span>{row.month}</span>
+
                         <span
                           style={{
                             width: 20,
@@ -264,7 +271,7 @@ export default function Overview({ navigate }) {
                             borderRadius: 6,
                             border: checked
                               ? "1px solid currentColor"
-                              : "1px solid rgba(148, 163, 184, .5)",
+                              : "1px solid rgba(148,163,184,.5)",
                           }}
                         >
                           {checked && <Check size={14} />}
@@ -293,22 +300,13 @@ export default function Overview({ navigate }) {
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={chartData}>
                   <defs>
-                    <linearGradient
-                      id="materialFill"
-                      x1="0"
-                      y1="0"
-                      x2="0"
-                      y2="1"
-                    >
+                    <linearGradient id="materialFill" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopOpacity=".22" />
                       <stop offset="100%" stopOpacity="0" />
                     </linearGradient>
                   </defs>
 
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    vertical={false}
-                  />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
 
                   <XAxis
                     dataKey="month"
@@ -371,7 +369,7 @@ export default function Overview({ navigate }) {
           <div className="card-head">
             <div>
               <h2>Market Drivers</h2>
-              <span>ปัจจัยที่ Model ให้น้ำหนัก</span>
+              <span>ปัจจัยที่ใช้สำหรับวิเคราะห์ราคาในกรุงเทพฯ</span>
             </div>
             <Sparkles size={18} />
           </div>
@@ -379,14 +377,14 @@ export default function Overview({ navigate }) {
           <Driver label="ราคาวัตถุดิบ" value={82} />
           <Driver label="ต้นทุนพลังงาน" value={68} />
           <Driver label="ค่าเงินบาท" value={47} />
-          <Driver label="Demand ก่อสร้าง" value={41} />
+          <Driver label="Demand ก่อสร้างในกรุงเทพฯ" value={41} />
           <Driver label="ฤดูกาล" value={19} />
 
           <div className="insight-box">
             <Info size={16} />
             <span>
-              ปัจจัยที่แสดงตอนนี้เป็นข้อมูลตัวอย่าง และจะเปลี่ยนตามผล Model
-              ของ {selectedMaterial.name} เมื่อเชื่อม Dataset จริง
+              ปัจจัยที่แสดงตอนนี้เป็นข้อมูลตัวอย่าง
+              และจะเปลี่ยนเป็นผลจาก Model จริงเมื่อเชื่อม Dataset กรุงเทพมหานคร
             </span>
           </div>
         </section>
@@ -395,14 +393,11 @@ export default function Overview({ navigate }) {
       <section className="card table-card">
         <div className="card-head">
           <div>
-            <h2>วัสดุที่ติดตาม</h2>
+            <h2>วัสดุที่ติดตามในกรุงเทพฯ</h2>
             <span>ราคาล่าสุดจาก Dataset</span>
           </div>
 
-          <button
-            className="text-btn"
-            onClick={() => navigate("prices")}
-          >
+          <button className="text-btn" onClick={() => navigate("prices")}>
             ดูทั้งหมด <ArrowUpRight size={15} />
           </button>
         </div>
