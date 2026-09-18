@@ -27,10 +27,13 @@ import {
 } from "lucide-react";
 
 import { materialUnits, materials } from "../data.js";
+import MaterialPicker from "../components/MaterialPicker.jsx";
 import { PageHeader } from "../components/Shared.jsx";
 
 const SCHEMA_VERSION = 2;
 const DRAFT_STORAGE_KEY = "thai-the-complete-boq-v2";
+const IMPORT_ACCEPT = ".json,.csv,.tsv,.xlsx,.xls,.pdf,.jpg,.jpeg,.png,.webp,application/json,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/pdf,image/jpeg,image/png,image/webp";
+const MAX_IMPORT_ROWS = 2000;
 const OFFICIAL_PRICE_URL = "https://index.tpso.go.th/construction-material-prices/prices-building-materials";
 const OFFICIAL_PRICE_NOTE = "ราคาวัสดุที่แสดงเป็นราคากลางหรือข้อมูลอ้างอิงจากภาครัฐ ไม่ใช่ราคาขายปลีก ใบเสนอราคา หรือราคาที่ผู้รับเหมาซื้อได้จริง ราคาหน้าร้านอาจแตกต่างตามพื้นที่ ยี่ห้อ ปริมาณซื้อ ค่าขนส่ง และเงื่อนไขการค้า กรุณาขอใบเสนอราคาจากร้านค้าก่อนจัดซื้อหรือยื่นราคา";
 
@@ -66,6 +69,7 @@ const UNIT_OPTIONS = [...new Set([
   "ต้น", "จุด", "ชุด", "อัน", "ใบ", "ถัง", "บ่อ", "เครื่อง", "งาน", "Lot",
   ...materialUnits,
 ])];
+const IMPORT_UNIT_KEYS = new Set(UNIT_OPTIONS.map((unit) => canonicalUnit(unit)).filter(Boolean));
 
 const EMPTY_PROJECT = {
   name: "บ้านพักอาศัย",
@@ -79,6 +83,30 @@ const EMPTY_PROJECT = {
 };
 
 const DEFAULT_RATES = { overhead: 0, profit: 0, contingency: 0, vat: 7 };
+const IMPORT_COLUMN_FIELDS = [
+  { key: "name", label: "รายการวัสดุ/งาน", required: true, aliases: ["รายการ", "รายการวัสดุ", "ชื่อวัสดุ", "ชื่องาน", "รายละเอียดงาน", "description", "item description", "material name", "item", "name"] },
+  { key: "quantity", label: "ปริมาณ", required: true, aliases: ["ปริมาณ", "จำนวน", "qty", "quantity", "volume"] },
+  { key: "unit", label: "หน่วย", required: true, aliases: ["หน่วย", "หน่วยนับ", "unit", "uom"] },
+  { key: "code", label: "รหัส/ลำดับ", aliases: ["รหัส", "รหัสรายการ", "ลำดับ", "เลขที่", "code", "item code", "item no", "no"] },
+  { key: "spec", label: "ขนาด/Specification", aliases: ["สเปก", "รายละเอียด/สเปก", "รายละเอียดสเปก", "ขนาด", "รุ่น", "spec", "specification", "size", "model"] },
+  { key: "materialRate", label: "ราคาเดิมในเอกสาร", aliases: ["ราคาวัสดุ", "ราคาต่อหน่วย", "ราคา/หน่วย", "ราคาหน่วย", "unit price", "material rate", "rate", "price"] },
+  { key: "section", label: "หมวดงาน", aliases: ["หมวดงาน", "หมวด", "ประเภทงาน", "work section", "section", "work category"] },
+  { key: "category", label: "หมวดวัสดุ", aliases: ["หมวดวัสดุ", "ประเภทวัสดุ", "material category", "category"] },
+  { key: "note", label: "หมายเหตุ", aliases: ["หมายเหตุ", "เงื่อนไข", "note", "notes", "remark", "remarks"] },
+];
+const IMPORT_PROJECT_FIELDS = {
+  name: ["ชื่อโครงการ", "โครงการ", "project name", "project"],
+  owner: ["เจ้าของโครงการ", "ผู้ว่าจ้าง", "owner", "client"],
+  location: ["สถานที่ก่อสร้าง", "สถานที่", "location", "site"],
+  drawingNo: ["เลขที่แบบ", "drawing no", "drawing number"],
+  estimator: ["ผู้ประมาณราคา", "ผู้จัดทำ", "estimator", "prepared by"],
+  estimateDate: ["วันที่ประมาณราคา", "วันที่", "estimate date", "date"],
+  buildingArea: ["พื้นที่อาคาร", "พื้นที่ใช้สอย", "building area", "floor area"],
+};
+const IMPORT_STOP_WORDS = new Set([
+  "งาน", "วัสดุ", "พร้อม", "และ", "ระบบ", "ชนิด", "ทั่วไป", "อื่นๆ", "ระบุ", "ติดตั้ง",
+  "ราคา", "หน่วย", "ขนาด", "ตรา", "รุ่น", "สำหรับ", "ด้วย", "ของ", "the", "and", "for", "with",
+]);
 const number = (value) => Math.max(0, Number(value) || 0);
 const optionalNumber = (value) => value === "" || value === null || value === undefined ? "" : number(value);
 
@@ -415,6 +443,649 @@ function downloadText(filename, content, type) {
   URL.revokeObjectURL(url);
 }
 
+function toArabicDigits(value = "") {
+  return String(value).replace(/[๐-๙]/g, (digit) => String("๐๑๒๓๔๕๖๗๘๙".indexOf(digit)));
+}
+
+function normalizeImportText(value = "") {
+  return toArabicDigits(value)
+    .normalize("NFKC")
+    .toLocaleLowerCase("th-TH")
+    .replace(/\bksc\b|kg\s*\/\s*cm(?:2|²)/g, " กกตรซม ")
+    .replace(/กก\.?\s*\/\s*ตร\.?\s*ซม\.?/g, " กกตรซม ")
+    .replace(/ลูกบาศก์\s*เมตร|ม(?:3|³)/g, " ลบม ")
+    .replace(/ตาราง\s*เมตร|ม(?:2|²)/g, " ตรม ")
+    .replace(/มิลลิเมตร|มม\.?/g, " mm ")
+    .replace(/เซนติเมตร|ซม\.?/g, " cm ")
+    .replace(/[Ø⌀]/g, " dia ")
+    .replace(/[×*]/g, " x ")
+    .replace(/[^\p{L}\p{N}.]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeColumnName(value = "") {
+  return normalizeImportText(value).replace(/\s+/g, "");
+}
+
+function parseLocaleNumber(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  let text = toArabicDigits(value).trim();
+  if (!text || /^[-–—]+$/.test(text)) return null;
+  const negative = /^\(.*\)$/.test(text) || /^-/.test(text);
+  text = text.replace(/[^0-9.,-]/g, "").replace(/^-/, "");
+  if (!text || !/\d/.test(text)) return null;
+  if (text.includes(".") && text.includes(",")) {
+    text = text.lastIndexOf(".") > text.lastIndexOf(",")
+      ? text.replace(/,/g, "")
+      : text.replace(/\./g, "").replace(",", ".");
+  } else if (text.includes(",")) {
+    const commaParts = text.split(",");
+    text = commaParts.length > 2 || commaParts.slice(1).every((part) => part.length === 3)
+      ? commaParts.join("")
+      : text.replace(",", ".");
+  }
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? (negative ? -parsed : parsed) : null;
+}
+
+function cleanImportCell(value) {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value).replace(/^\uFEFF/, "").trim();
+}
+
+function compactMatrix(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => (Array.isArray(row) ? row : [row]).map(cleanImportCell))
+    .filter((row) => row.some((cell) => cell !== ""));
+}
+
+function detectDelimiter(text) {
+  const sample = String(text).split(/\r?\n/).slice(0, 20).join("\n");
+  const candidates = [",", "\t", ";", "|"];
+  let best = { delimiter: ",", score: -1 };
+  candidates.forEach((delimiter) => {
+    let count = 0;
+    let inQuotes = false;
+    for (let index = 0; index < sample.length; index += 1) {
+      const character = sample[index];
+      if (character === '"') {
+        if (inQuotes && sample[index + 1] === '"') index += 1;
+        else inQuotes = !inQuotes;
+      } else if (!inQuotes && character === delimiter) count += 1;
+    }
+    if (count > best.score) best = { delimiter, score: count };
+  });
+  return best.delimiter;
+}
+
+function parseDelimitedText(text, delimiter = detectDelimiter(text)) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  const input = String(text).replace(/^\uFEFF/, "");
+  for (let index = 0; index < input.length; index += 1) {
+    const character = input[index];
+    if (quoted) {
+      if (character === '"' && input[index + 1] === '"') {
+        cell += '"';
+        index += 1;
+      } else if (character === '"') quoted = false;
+      else cell += character;
+    } else if (character === '"') quoted = true;
+    else if (character === delimiter) {
+      row.push(cell);
+      cell = "";
+    } else if (character === "\n" || character === "\r") {
+      if (character === "\r" && input[index + 1] === "\n") index += 1;
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+    } else cell += character;
+  }
+  if (cell || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return compactMatrix(rows);
+}
+
+function columnAliasScore(header, alias) {
+  const normalizedHeader = normalizeColumnName(header);
+  const normalizedAlias = normalizeColumnName(alias);
+  if (!normalizedHeader || !normalizedAlias) return 0;
+  if (normalizedHeader === normalizedAlias) return 100 + normalizedAlias.length;
+  if (normalizedHeader.startsWith(normalizedAlias) || normalizedAlias.startsWith(normalizedHeader)) return 70 + Math.min(normalizedHeader.length, normalizedAlias.length);
+  if (normalizedHeader.includes(normalizedAlias)) return 50 + normalizedAlias.length;
+  return 0;
+}
+
+function detectColumnMapping(headers) {
+  const pairs = [];
+  IMPORT_COLUMN_FIELDS.forEach((field) => {
+    headers.forEach((header, columnIndex) => {
+      const score = Math.max(0, ...field.aliases.map((alias) => columnAliasScore(header, alias)));
+      if (score) pairs.push({ field: field.key, columnIndex, score });
+    });
+  });
+  pairs.sort((a, b) => b.score - a.score);
+  const mapping = {};
+  const usedColumns = new Set();
+  pairs.forEach((pair) => {
+    if (mapping[pair.field] === undefined && !usedColumns.has(pair.columnIndex)) {
+      mapping[pair.field] = pair.columnIndex;
+      usedColumns.add(pair.columnIndex);
+    }
+  });
+  return mapping;
+}
+
+function uniqueHeaders(row) {
+  const used = new Map();
+  return row.map((cell, index) => {
+    const base = cleanImportCell(cell) || `คอลัมน์ ${index + 1}`;
+    const count = (used.get(base) || 0) + 1;
+    used.set(base, count);
+    return count === 1 ? base : `${base} (${count})`;
+  });
+}
+
+function findBestHeaderRow(matrix) {
+  let best = { index: 0, score: -1, mapping: {} };
+  matrix.slice(0, 30).forEach((row, index) => {
+    const headers = uniqueHeaders(row);
+    const mapping = detectColumnMapping(headers);
+    let score = Object.keys(mapping).length * 4;
+    if (mapping.name !== undefined) score += 9;
+    if (mapping.quantity !== undefined) score += 6;
+    if (mapping.unit !== undefined) score += 5;
+    if (mapping.materialRate !== undefined) score += 2;
+    if (score > best.score) best = { index, score, mapping };
+  });
+  return best;
+}
+
+function valueAfterProjectLabel(row, cellIndex, cell) {
+  const next = row.slice(cellIndex + 1).find((value) => cleanImportCell(value));
+  if (next) return cleanImportCell(next);
+  const text = cleanImportCell(cell);
+  const separatorIndex = Math.max(text.indexOf(":"), text.indexOf("："));
+  return separatorIndex >= 0 ? text.slice(separatorIndex + 1).trim() : "";
+}
+
+function detectProjectInfo(matrix) {
+  const projectInfo = {};
+  compactMatrix(matrix).slice(0, 60).forEach((row) => {
+    row.forEach((cell, cellIndex) => {
+      const normalizedCell = normalizeColumnName(cell.split(/[:：]/)[0]);
+      Object.entries(IMPORT_PROJECT_FIELDS).forEach(([key, aliases]) => {
+        if (projectInfo[key]) return;
+        const matched = aliases.some((alias) => {
+          const normalizedAlias = normalizeColumnName(alias);
+          return normalizedCell === normalizedAlias || normalizedCell.startsWith(normalizedAlias);
+        });
+        if (matched) projectInfo[key] = valueAfterProjectLabel(row, cellIndex, cell);
+      });
+    });
+  });
+  if (projectInfo.buildingArea) projectInfo.buildingArea = parseLocaleNumber(projectInfo.buildingArea) ?? "";
+  if (projectInfo.estimateDate && !/^\d{4}-\d{2}-\d{2}$/.test(projectInfo.estimateDate)) delete projectInfo.estimateDate;
+  return projectInfo;
+}
+
+function createSourceTable(rows, sheetName = "ข้อมูล") {
+  const matrix = compactMatrix(rows);
+  if (!matrix.length) throw new Error("ไม่พบข้อมูลตารางในไฟล์นี้");
+  const bestHeader = findBestHeaderRow(matrix);
+  const headerIndex = bestHeader.score > 0 ? bestHeader.index : 0;
+  const headers = uniqueHeaders(matrix[headerIndex] || []);
+  const columnCount = headers.length;
+  const dataRows = matrix.slice(headerIndex + 1)
+    .map((row) => Array.from({ length: columnCount }, (_, index) => cleanImportCell(row[index])))
+    .filter((row) => row.some(Boolean));
+  return {
+    name: sheetName,
+    matrix,
+    headerIndex,
+    headers,
+    dataRows,
+    mapping: detectColumnMapping(headers),
+    projectInfo: detectProjectInfo(matrix.slice(0, Math.max(headerIndex + 1, 20))),
+    detectionScore: bestHeader.score,
+  };
+}
+
+function externalProjectInfo(payload) {
+  const source = payload?.project || payload?.projectInfo || payload?.metadata?.project || {};
+  if (!source || typeof source !== "object" || Array.isArray(source)) return {};
+  const output = {};
+  const aliases = {
+    name: ["name", "projectName", "project_name", "ชื่อโครงการ"],
+    owner: ["owner", "client", "เจ้าของโครงการ"],
+    location: ["location", "site", "สถานที่ก่อสร้าง"],
+    drawingNo: ["drawingNo", "drawing_no", "เลขที่แบบ"],
+    estimator: ["estimator", "preparedBy", "prepared_by", "ผู้ประมาณราคา"],
+    estimateDate: ["estimateDate", "estimate_date", "date", "วันที่ประมาณราคา"],
+    buildingArea: ["buildingArea", "building_area", "area", "พื้นที่อาคาร"],
+  };
+  Object.entries(aliases).forEach(([target, keys]) => {
+    const key = keys.find((candidate) => source[candidate] !== undefined && source[candidate] !== null && source[candidate] !== "");
+    if (key) output[target] = source[key];
+  });
+  if (output.buildingArea) output.buildingArea = parseLocaleNumber(output.buildingArea) ?? "";
+  if (output.estimateDate && !/^\d{4}-\d{2}-\d{2}$/.test(String(output.estimateDate))) delete output.estimateDate;
+  return output;
+}
+
+function findExternalRows(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== "object") return null;
+  const directKeys = ["items", "rows", "boqItems", "boq_items", "boq", "materials", "data", "details"];
+  for (const key of directKeys) {
+    if (Array.isArray(payload[key])) return payload[key];
+    if (payload[key] && typeof payload[key] === "object") {
+      const nested = findExternalRows(payload[key]);
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+
+function objectRowsToMatrix(rows) {
+  if (!Array.isArray(rows) || !rows.length) return [];
+  if (rows.every((row) => Array.isArray(row))) return rows;
+  const objectRows = rows.filter((row) => row && typeof row === "object" && !Array.isArray(row));
+  const headers = [];
+  objectRows.slice(0, 200).forEach((row) => Object.keys(row).forEach((key) => {
+    if (!headers.includes(key)) headers.push(key);
+  }));
+  return [headers, ...objectRows.map((row) => headers.map((key) => cleanImportCell(row[key])))];
+}
+
+function isCostPlannerBackup(payload) {
+  return payload?.schemaVersion === SCHEMA_VERSION && Array.isArray(payload?.rows)
+    && payload.rows.every((row) => row && typeof row === "object" && "sectionId" in row);
+}
+
+function mergeDetectedProjectInfo(...sources) {
+  return sources.reduce((merged, source) => {
+    Object.entries(source || {}).forEach(([key, value]) => {
+      if (value !== "" && value !== null && value !== undefined && !merged[key]) merged[key] = value;
+    });
+    return merged;
+  }, {});
+}
+
+function pdfTextItemsToLines(items, pageNumber) {
+  const entries = items
+    .filter((item) => typeof item?.str === "string" && item.str.trim())
+    .map((item) => ({
+      text: item.str.trim(),
+      x: Number(item.transform?.[4]) || 0,
+      y: Number(item.transform?.[5]) || 0,
+      width: Math.max(0, Number(item.width) || 0),
+      height: Math.max(1, Math.abs(Number(item.height) || Number(item.transform?.[3]) || 10)),
+    }))
+    .sort((a, b) => Math.abs(b.y - a.y) > 2.5 ? b.y - a.y : a.x - b.x);
+  const groups = [];
+  entries.forEach((entry) => {
+    const line = groups.find((candidate) => Math.abs(candidate.y - entry.y) <= Math.max(2.5, entry.height * 0.25));
+    if (line) line.items.push(entry);
+    else groups.push({ y: entry.y, items: [entry] });
+  });
+  return groups
+    .sort((a, b) => b.y - a.y)
+    .map((line) => {
+      const sorted = line.items.sort((a, b) => a.x - b.x);
+      const cells = [];
+      sorted.forEach((entry) => {
+        const previous = cells[cells.length - 1];
+        const gap = previous ? entry.x - previous.endX : Number.POSITIVE_INFINITY;
+        const splitGap = Math.max(7, entry.height * 0.85);
+        if (!previous || gap > splitGap) cells.push({ text: entry.text, endX: entry.x + entry.width });
+        else {
+          const separator = gap > 1.5 ? " " : "";
+          previous.text += `${separator}${entry.text}`;
+          previous.endX = Math.max(previous.endX, entry.x + entry.width);
+        }
+      });
+      return { pageNumber, cells: cells.map((cell) => cleanImportCell(cell.text)).filter(Boolean) };
+    })
+    .filter((line) => line.cells.length);
+}
+
+function commonPdfUnit(value) {
+  const unit = canonicalUnit(value);
+  return unit && IMPORT_UNIT_KEYS.has(unit);
+}
+
+function parseCombinedPdfRow(text, currentSection) {
+  const unitPattern = /(?:ลบ\.?\s*ม\.?|ตร\.?\s*ม\.?|กก\.?|กิโลกรัม|ตัน|เมตร|ม\.|แผ่น|เส้น|ท่อน|ถุง|ก้อน|ชุด|จุด|อัน|ใบ|ถัง|บ่อ|เครื่อง|งาน|lot)/i;
+  const match = String(text).match(new RegExp(`^(.*?)\\s+(-?\\d[\\d,]*(?:\\.\\d+)?)\\s*(${unitPattern.source})\\s*(.*)$`, "i"));
+  if (!match) return null;
+  let leading = match[1].trim();
+  const quantity = parseLocaleNumber(match[2]);
+  const unit = match[3].trim();
+  const tail = match[4].trim();
+  const codeMatch = leading.match(/^([A-Za-zก-ฮ]?\d+(?:[.\/-]\d+)*)\s+(.+)$/);
+  const code = codeMatch?.[1] || "";
+  if (codeMatch) leading = codeMatch[2];
+  if (!leading || quantity === null) return null;
+  return [code, leading, "", quantity, unit, parseLocaleNumber(tail) ?? "", currentSection, tail];
+}
+
+function pdfLinesToTable(lines) {
+  const rawMatrix = lines.map((line) => line.cells);
+  try {
+    const detected = createSourceTable(rawMatrix, "PDF");
+    if (detected.mapping.name !== undefined && detected.mapping.quantity !== undefined && detected.mapping.unit !== undefined) {
+      return { rows: rawMatrix, warning: "อ่านตารางจาก Text Layer ของ PDF โดยตรง" };
+    }
+  } catch {
+    // Continue with the line-based fallback below.
+  }
+
+  const output = [["รหัส", "รายการ", "สเปก", "ปริมาณ", "หน่วย", "ราคาต่อหน่วย", "หมวดงาน", "ข้อความต้นฉบับ"]];
+  let currentSection = "";
+  lines.forEach((line) => {
+    const cells = line.cells;
+    const joined = cells.join(" ").replace(/\s+/g, " ").trim();
+    const normalized = normalizeImportText(joined);
+    if (!joined || /^(รายการ|ลำดับ|description|item)\b/i.test(normalized) || /^(รวม|subtotal|grand total)/i.test(normalized)) return;
+    const hasNumber = cells.some((cell) => parseLocaleNumber(cell) !== null);
+    if (!hasNumber && cells.length <= 3 && /งาน|หมวด|section|category/i.test(joined)) {
+      currentSection = joined;
+      return;
+    }
+    const unitIndex = cells.findIndex((cell) => commonPdfUnit(cell));
+    if (unitIndex < 0) {
+      const combined = parseCombinedPdfRow(joined, currentSection);
+      if (combined) output.push(combined);
+      return;
+    }
+    let quantityIndex = -1;
+    for (let index = unitIndex - 1; index >= 0; index -= 1) {
+      if (parseLocaleNumber(cells[index]) !== null) {
+        quantityIndex = index;
+        break;
+      }
+    }
+    if (quantityIndex < 0 || quantityIndex === 0) return;
+    const quantity = parseLocaleNumber(cells[quantityIndex]);
+    let nameCells = cells.slice(0, quantityIndex);
+    let code = "";
+    if (/^[A-Za-zก-ฮ]?\d+(?:[.\/-]\d+)*$/.test(nameCells[0] || "")) code = nameCells.shift();
+    const name = nameCells.join(" ").trim();
+    if (!name || quantity === null) return;
+    const afterUnit = cells.slice(unitIndex + 1);
+    const sourceRate = afterUnit.map(parseLocaleNumber).find((value) => value !== null) ?? "";
+    output.push([code, name, "", quantity, cells[unitIndex], sourceRate, currentSection, joined]);
+  });
+  return {
+    rows: output,
+    warning: output.length > 1
+      ? "PDF ไม่มีโครงสร้างตารางที่ชัดเจน ระบบจึงแยกรายการจากตำแหน่งข้อความ กรุณาตรวจทุกแถว"
+      : "อ่านข้อความจาก PDF ได้ แต่ยังแยกรายการ BOQ ไม่ได้ กรุณาใช้ Excel/CSV หรือปรับเอกสารต้นทาง",
+  };
+}
+
+async function parsePdfClientSide(file) {
+  let pdfjs;
+  try {
+    const [library, worker] = await Promise.all([
+      import("pdfjs-dist"),
+      import("pdfjs-dist/build/pdf.worker.min.mjs?url"),
+    ]);
+    pdfjs = library;
+    if (pdfjs.GlobalWorkerOptions && worker?.default) pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
+  } catch (error) {
+    throw new Error("ยังไม่พบ PDF.js สำหรับอ่าน PDF ใน Browser กรุณาติดตั้งด้วยคำสั่ง npm install pdfjs-dist แล้วลองใหม่");
+  }
+  const documentTask = pdfjs.getDocument({ data: await file.arrayBuffer() });
+  const document = await documentTask.promise;
+  const lines = [];
+  let characterCount = 0;
+  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+    const page = await document.getPage(pageNumber);
+    const textContent = await page.getTextContent();
+    characterCount += textContent.items.reduce((total, item) => total + String(item?.str || "").trim().length, 0);
+    lines.push(...pdfTextItemsToLines(textContent.items, pageNumber));
+  }
+  if (characterCount < 20) {
+    return {
+      kind: "ocr-required",
+      sourceType: "pdf-scan",
+      message: "เอกสารนี้เป็น PDF สแกน จำเป็นต้องใช้ OCR",
+      detail: "OCR ยังไม่รองรับในเวอร์ชันปัจจุบัน ไฟล์ไม่ได้ถูกนำเข้าและไม่มีการสร้างข้อมูลจำลอง",
+      pageCount: document.numPages,
+    };
+  }
+  const extracted = pdfLinesToTable(lines);
+  return {
+    kind: "table",
+    sourceType: "pdf",
+    sheets: [{ name: `PDF (${document.numPages} หน้า)`, rows: extracted.rows }],
+    projectInfo: detectProjectInfo(lines.map((line) => line.cells)),
+    warnings: [extracted.warning],
+    pageCount: document.numPages,
+  };
+}
+
+async function parseSpreadsheetClientSide(file) {
+  let spreadsheet;
+  try {
+    const imported = await import("xlsx");
+    spreadsheet = imported.default || imported;
+  } catch {
+    throw new Error("ยังไม่พบไลบรารี xlsx สำหรับอ่าน Excel ใน Browser กรุณาติดตั้งด้วยคำสั่ง npm install xlsx แล้วลองใหม่");
+  }
+  const workbook = spreadsheet.read(await file.arrayBuffer(), { type: "array", cellDates: true, raw: false });
+  const sheets = workbook.SheetNames.map((name) => ({
+    name,
+    rows: spreadsheet.utils.sheet_to_json(workbook.Sheets[name], {
+      header: 1,
+      raw: false,
+      defval: "",
+      blankrows: false,
+      dateNF: "yyyy-mm-dd",
+    }),
+  })).filter((sheet) => compactMatrix(sheet.rows).length);
+  if (!sheets.length) throw new Error("ไม่พบข้อมูลใน Sheet ของไฟล์ Excel นี้");
+  return { kind: "table", sourceType: "excel", sheets, projectInfo: {}, warnings: [] };
+}
+
+async function parseImportFile(file) {
+  const extension = String(file.name || "").split(".").pop()?.toLowerCase() || "";
+  if (extension === "json" || file.type === "application/json") {
+    let payload;
+    try {
+      payload = JSON.parse(await file.text());
+    } catch {
+      throw new Error("JSON ไม่ถูกต้อง กรุณาตรวจวงเล็บ เครื่องหมายคำพูด และ comma ในไฟล์");
+    }
+    if (isCostPlannerBackup(payload)) return { kind: "backup", sourceType: "json-backup", payload };
+    const rows = findExternalRows(payload);
+    if (!rows?.length) throw new Error("ไม่พบ Array รายการ BOQ ใน JSON ภายนอก (รองรับ items, rows, boqItems, boq, materials หรือ data)");
+    return {
+      kind: "table",
+      sourceType: "json-external",
+      sheets: [{ name: "JSON", rows: objectRowsToMatrix(rows) }],
+      projectInfo: externalProjectInfo(payload),
+      warnings: [],
+    };
+  }
+  if (["csv", "tsv"].includes(extension) || /csv|tab-separated-values/.test(file.type)) {
+    const text = await file.text();
+    const delimiter = extension === "tsv" ? "\t" : detectDelimiter(text);
+    return {
+      kind: "table",
+      sourceType: extension === "tsv" ? "tsv" : "csv",
+      sheets: [{ name: extension === "tsv" ? "TSV" : "CSV", rows: parseDelimitedText(text, delimiter) }],
+      projectInfo: {},
+      warnings: [],
+    };
+  }
+  if (["xlsx", "xls"].includes(extension) || /spreadsheetml|ms-excel/.test(file.type)) return parseSpreadsheetClientSide(file);
+  if (extension === "pdf" || file.type === "application/pdf") return parsePdfClientSide(file);
+  if (["jpg", "jpeg", "png", "webp"].includes(extension) || file.type.startsWith("image/")) {
+    return {
+      kind: "ocr-required",
+      sourceType: "image",
+      message: "ไฟล์รูปภาพต้องใช้ OCR ซึ่งยังไม่เปิดใช้งานในเวอร์ชันนี้",
+      detail: "ระบบจะแสดง Preview เท่านั้น และจะไม่เดารายการหรือราคาให้เอง",
+      previewUrl: URL.createObjectURL(file),
+    };
+  }
+  throw new Error("ไม่รองรับไฟล์ประเภทนี้ กรุณาใช้ JSON, CSV, TSV, XLSX, XLS, PDF, JPG, PNG หรือ WEBP");
+}
+
+function mappedCell(row, mapping, key) {
+  const index = mapping?.[key];
+  return index === undefined || index === null || index === "" ? "" : cleanImportCell(row[Number(index)]);
+}
+
+function previewRowErrors(item) {
+  const errors = [];
+  if (!item.name) errors.push("ไม่มีชื่อรายการ");
+  if (item.quantity === null || item.quantity <= 0) errors.push("ปริมาณต้องมากกว่า 0");
+  if (!item.unit) errors.push("ไม่มีหน่วย");
+  return errors;
+}
+
+function isSummaryImportRow(name, unit, quantity) {
+  const normalized = normalizeImportText(name);
+  return /^(รวม|รวมทั้งสิ้น|ยอดรวม|subtotal|grand total|total)/i.test(normalized) && (!unit || quantity === null);
+}
+
+function buildImportPreview(table, mapping, fileName) {
+  const previewRows = [];
+  let skippedSummaryRows = 0;
+  const rowsToRead = table.dataRows.slice(0, MAX_IMPORT_ROWS);
+  rowsToRead.forEach((row, index) => {
+    const item = {
+      id: `import-preview-${index + 1}`,
+      sourceRow: table.headerIndex + index + 2,
+      code: mappedCell(row, mapping, "code"),
+      name: mappedCell(row, mapping, "name"),
+      spec: mappedCell(row, mapping, "spec"),
+      quantity: parseLocaleNumber(mappedCell(row, mapping, "quantity")),
+      unit: mappedCell(row, mapping, "unit"),
+      sourceRate: parseLocaleNumber(mappedCell(row, mapping, "materialRate")),
+      section: mappedCell(row, mapping, "section"),
+      category: mappedCell(row, mapping, "category"),
+      note: mappedCell(row, mapping, "note"),
+      sourceFile: fileName,
+    };
+    if (!item.name && !item.quantity && !item.unit) return;
+    if (isSummaryImportRow(item.name, item.unit, item.quantity)) {
+      skippedSummaryRows += 1;
+      return;
+    }
+    const { candidates, autoSelected } = findMaterialCandidates(item);
+    item.candidates = candidates;
+    item.selectedMaterialId = autoSelected ? materialId(autoSelected.material) : "";
+    item.matchMethod = autoSelected ? "auto" : candidates.length ? "candidate" : "unmatched";
+    item.errors = previewRowErrors(item);
+    item.needsRematch = false;
+    previewRows.push(item);
+  });
+  return {
+    previewRows,
+    skippedSummaryRows,
+    truncated: table.dataRows.length > MAX_IMPORT_ROWS,
+  };
+}
+
+function selectedPreviewMaterial(item) {
+  return item.selectedMaterialId ? MATERIAL_BY_ID.get(String(item.selectedMaterialId)) || null : null;
+}
+
+function previewMatchStatus(item) {
+  const selected = selectedPreviewMaterial(item);
+  if (selected) return convertedOfficialPrice(selected, item.unit) !== null ? "matched" : "unit-mismatch";
+  return item.candidates?.length ? "candidate" : "unmatched";
+}
+
+function rematchPreviewItem(item) {
+  const { candidates, autoSelected } = findMaterialCandidates(item);
+  return {
+    ...item,
+    candidates,
+    selectedMaterialId: autoSelected ? materialId(autoSelected.material) : "",
+    matchMethod: autoSelected ? "auto" : candidates.length ? "candidate" : "unmatched",
+    errors: previewRowErrors(item),
+    needsRematch: false,
+  };
+}
+
+function sectionIdForImportedItem(item) {
+  const text = normalizeImportText(`${item.section || ""} ${item.category || ""} ${item.name || ""}`);
+  const direct = SECTION_DEFINITIONS.find((section) => {
+    const title = normalizeImportText(section.title.replace(/^งาน/, ""));
+    return title && (text.includes(title) || normalizeImportText(item.section) === normalizeImportText(section.code));
+  });
+  if (direct) return direct.id;
+  const rules = [
+    ["earthwork", /ดิน|ทรายถม|หินคลุก|ขุด|ถม/],
+    ["foundation", /เสาเข็ม|ฐานราก|หัวเข็ม/],
+    ["concrete_formwork", /คอนกรีต|ปูนซีเมนต์|แบบหล่อ/],
+    ["rebar", /เหล็กเส้น|เหล็กข้ออ้อย|ไวร์เมช|ลวดผูก/],
+    ["structural_steel", /เหล็กรูปพรรณ|เหล็กกล่อง|เหล็กตัวซี|ลวดเชื่อม/],
+    ["roof", /หลังคา|ครอบ|รางน้ำ|เมทัลชีท/],
+    ["wall", /อิฐ|ผนัง|ปูนฉาบ|บล็อก/],
+    ["ceiling", /ฝ้า|ยิปซัม/],
+    ["finish", /กระเบื้อง|พื้น|หินอ่อน|ลามิเนต/],
+    ["sanitary_fixture", /สุขภัณฑ์|โถสุขภัณฑ์|อ่างล้าง/],
+    ["opening", /ประตู|หน้าต่าง|กระจก|วงกบ/],
+    ["paint", /สีทา|สีรองพื้น|น้ำยารองพื้น/],
+    ["electrical", /ไฟฟ้า|สายไฟ|สวิตช์|ปลั๊ก|โคมไฟ|เบรกเกอร์/],
+    ["plumbing", /ประปา|ท่อน้ำ|วาล์ว|ก๊อก/],
+    ["sanitary_drainage", /ระบายน้ำ|สุขาภิบาล|บ่อพัก|ถังบำบัด/],
+  ];
+  return rules.find(([, pattern]) => pattern.test(text))?.[0] || "architectural_other";
+}
+
+function buildPlannerRowsFromPreview(previewRows, fileName) {
+  const timestamp = Date.now();
+  const sectionCounts = new Map();
+  const usedCodes = new Set();
+  return previewRows.filter((item) => !previewRowErrors(item).length).map((item, index) => {
+    const sectionId = sectionIdForImportedItem(item);
+    const section = SECTION_DEFINITIONS.find((entry) => entry.id === sectionId) || SECTION_DEFINITIONS[0];
+    const count = (sectionCounts.get(sectionId) || 0) + 1;
+    sectionCounts.set(sectionId, count);
+    let code = item.code || `${section.code}${String(count).padStart(2, "0")}`;
+    if (usedCodes.has(code)) code = `${code}-${count}`;
+    usedCodes.add(code);
+    const selectedMaterial = selectedPreviewMaterial(item);
+    const sourceRateNote = item.sourceRate !== null && item.sourceRate !== undefined
+      ? `ราคาในไฟล์ต้นทาง ${formatPrice(item.sourceRate)} บาท/${item.unit} เก็บไว้เพื่ออ้างอิงเท่านั้น ระบบใช้ราคาจาก data.js เมื่อจับคู่วัสดุสำเร็จ`
+      : "";
+    return {
+      id: `import-${timestamp}-${index + 1}`,
+      sectionId,
+      code,
+      name: item.name,
+      spec: item.spec || "",
+      unit: item.unit,
+      quantity: item.quantity,
+      costTypes: { material: true, labor: false, equipment: false },
+      wastePct: 0,
+      keywords: materialTokens(`${item.name} ${item.spec}`).slice(0, 12),
+      materialId: selectedMaterial ? materialId(selectedMaterial) : "",
+      materialRate: "",
+      futureMaterialRate: "",
+      laborRate: "",
+      equipmentRate: "",
+      note: [item.note, sourceRateNote, `นำเข้าจาก ${fileName}`].filter(Boolean).join(" • "),
+    };
+  });
+}
+
 function normalizeUnit(unit = "") {
   return String(unit).replace(/บาท\s*\//g, "").replace(/บาทต่อ/g, "").replace(/\s/g, "").toLowerCase();
 }
@@ -494,6 +1165,104 @@ function compatibleMaterialsForUnit(unit) {
   const target = canonicalUnit(unit);
   const keys = target === "kg" ? ["kg", "ton"] : target === "ton" ? ["ton", "kg"] : [target];
   return keys.flatMap((key) => MATERIALS_BY_UNIT.get(key) || []);
+}
+
+function materialTokens(value) {
+  return normalizeImportText(value)
+    .split(/\s+/)
+    .filter((token) => token.length >= 2 && !IMPORT_STOP_WORDS.has(token));
+}
+
+function numericSpecs(value) {
+  return [...normalizeImportText(value).matchAll(/\d+(?:\.\d+)?/g)].map((match) => match[0]);
+}
+
+const MATERIAL_MATCH_INDEX = materials.map((material) => {
+  const name = materialName(material);
+  const category = String(material?.category || "");
+  const joined = `${materialId(material)} ${name} ${category}`;
+  return {
+    material,
+    text: normalizeImportText(joined),
+    nameText: normalizeImportText(name),
+    categoryText: normalizeImportText(category),
+    tokens: new Set(materialTokens(joined)),
+    specs: new Set(numericSpecs(name)),
+    unit: canonicalUnit(materialUnit(material)),
+  };
+});
+
+function unitCompatibilityScore(sourceUnit, material) {
+  const source = canonicalUnit(sourceUnit);
+  const target = canonicalUnit(materialUnit(material));
+  if (!source || !target) return 0.25;
+  if (source === target) return 1;
+  if ((source === "kg" && target === "ton") || (source === "ton" && target === "kg")) return 0.9;
+  return 0;
+}
+
+function categorySimilarity(sourceCategory, indexedMaterial) {
+  const queryTokens = materialTokens(sourceCategory);
+  if (!queryTokens.length) return 0.5;
+  const matched = queryTokens.filter((token) => indexedMaterial.categoryText.includes(token)).length;
+  return matched / queryTokens.length;
+}
+
+function scoreMaterialCandidate(item, indexedMaterial) {
+  const queryName = `${item.name || ""} ${item.spec || ""}`.trim();
+  const queryText = normalizeImportText(queryName);
+  const queryTokens = [...new Set(materialTokens(queryName))];
+  if (!queryTokens.length) return null;
+
+  let matchedWeight = 0;
+  let totalWeight = 0;
+  queryTokens.forEach((token) => {
+    const weight = Math.min(12, Math.max(2, token.length));
+    totalWeight += weight;
+    if (indexedMaterial.tokens.has(token)) matchedWeight += weight;
+    else if (indexedMaterial.text.includes(token)) matchedWeight += weight * 0.72;
+  });
+  const tokenScore = totalWeight ? matchedWeight / totalWeight : 0;
+  const phraseScore = queryText.length >= 4 && indexedMaterial.nameText.includes(queryText) ? 1 : 0;
+  const querySpecs = [...new Set(numericSpecs(queryName))];
+  const matchedSpecs = querySpecs.filter((spec) => indexedMaterial.specs.has(spec)).length;
+  const specScore = querySpecs.length ? matchedSpecs / querySpecs.length : 0.5;
+  const unitScore = unitCompatibilityScore(item.unit, indexedMaterial.material);
+  const categoryScore = categorySimilarity(`${item.category || ""} ${item.section || ""}`, indexedMaterial);
+  const idExact = normalizeImportText(item.code) && normalizeImportText(item.code) === normalizeImportText(materialId(indexedMaterial.material));
+  let score = tokenScore * 0.56 + specScore * 0.2 + unitScore * 0.14 + categoryScore * 0.06 + phraseScore * 0.04;
+  if (idExact) score = 1;
+  if (querySpecs.length && matchedSpecs === 0 && indexedMaterial.specs.size) score *= 0.7;
+  if (!tokenScore) score *= 0.35;
+  return {
+    material: indexedMaterial.material,
+    score: Math.max(0, Math.min(1, score)),
+    unitScore,
+    tokenScore,
+    specScore,
+    reasons: [
+      tokenScore >= 0.75 ? "ชื่อใกล้เคียง" : tokenScore >= 0.4 ? "มีคำสำคัญตรงกัน" : "",
+      querySpecs.length && specScore === 1 ? "สเปกตรง" : "",
+      unitScore >= 0.9 ? "หน่วยรองรับ" : "",
+      categoryScore >= 0.8 && categoryScore !== 0.5 ? "หมวดตรงกัน" : "",
+    ].filter(Boolean),
+  };
+}
+
+function findMaterialCandidates(item, limit = 5) {
+  const ranked = MATERIAL_MATCH_INDEX
+    .map((indexedMaterial) => scoreMaterialCandidate(item, indexedMaterial))
+    .filter((candidate) => candidate && candidate.score >= 0.24)
+    .sort((a, b) => b.score - a.score || b.unitScore - a.unitScore || materialName(a.material).localeCompare(materialName(b.material), "th"))
+    .slice(0, limit);
+  const best = ranked[0] || null;
+  const runnerUp = ranked[1] || null;
+  const gap = best ? best.score - (runnerUp?.score || 0) : 0;
+  const autoSelected = best && best.unitScore >= 0.9 && best.score >= 0.78
+    && (gap >= 0.08 || best.score >= 0.94)
+    ? best
+    : null;
+  return { candidates: ranked, autoSelected };
 }
 
 function materialOptionsFor(row, query = "") {
@@ -651,6 +1420,9 @@ export default function CostPlanner() {
   );
   const [savedAt, setSavedAt] = useState(initialDraft?.savedAt || "");
   const [saveStatus, setSaveStatus] = useState(initialDraft?.savedAt ? "saved" : "idle");
+  const [importSession, setImportSession] = useState(null);
+  const [importDragging, setImportDragging] = useState(false);
+  const [importNotice, setImportNotice] = useState(null);
   const importRef = useRef(null);
   const summaryRef = useRef(null);
   const [summaryInView, setSummaryInView] = useState(false);
@@ -861,28 +1633,227 @@ export default function CostPlanner() {
     );
   };
 
-  const importDraft = async (event) => {
+  const closeImportDialog = () => {
+    if (importSession?.previewUrl) URL.revokeObjectURL(importSession.previewUrl);
+    setImportSession(null);
+    setImportDragging(false);
+  };
+
+  const openImportFile = async (file) => {
+    if (!file) return;
+    if (importSession?.previewUrl) URL.revokeObjectURL(importSession.previewUrl);
+    const sessionId = `import-session-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    setImportNotice(null);
+    setImportSession({
+      id: sessionId,
+      stage: "reading",
+      fileName: file.name,
+      fileSize: file.size,
+      sourceType: "",
+      importMode: "replace",
+      applyProjectInfo: true,
+    });
+    try {
+      const parsed = await parseImportFile(file);
+      if (parsed.kind === "backup") {
+        setImportSession((current) => current?.id === sessionId ? {
+          ...current,
+          stage: "backup",
+          sourceType: parsed.sourceType,
+          backupPayload: parsed.payload,
+        } : current);
+        return;
+      }
+      if (parsed.kind === "ocr-required") {
+        setImportSession((current) => current?.id === sessionId ? {
+          ...current,
+          stage: "ocr-required",
+          sourceType: parsed.sourceType,
+          message: parsed.message,
+          detail: parsed.detail,
+          previewUrl: parsed.previewUrl,
+          pageCount: parsed.pageCount,
+        } : current);
+        return;
+      }
+      const tables = parsed.sheets.map((sheet) => {
+        try {
+          return createSourceTable(sheet.rows, sheet.name);
+        } catch {
+          return null;
+        }
+      }).filter(Boolean);
+      if (!tables.length) throw new Error("ไม่พบ Sheet หรือตารางที่สามารถอ่านได้");
+      let selectedSheetIndex = 0;
+      tables.forEach((table, index) => {
+        const currentScore = tables[selectedSheetIndex].detectionScore + Object.keys(tables[selectedSheetIndex].mapping).length * 5;
+        const candidateScore = table.detectionScore + Object.keys(table.mapping).length * 5;
+        if (candidateScore > currentScore) selectedSheetIndex = index;
+      });
+      const table = tables[selectedSheetIndex];
+      setImportSession((current) => current?.id === sessionId ? {
+        ...current,
+        stage: "mapping",
+        sourceType: parsed.sourceType,
+        tables,
+        selectedSheetIndex,
+        table,
+        mapping: table.mapping,
+        baseProjectInfo: parsed.projectInfo || {},
+        projectInfo: mergeDetectedProjectInfo(parsed.projectInfo, table.projectInfo),
+        warnings: parsed.warnings || [],
+        pageCount: parsed.pageCount,
+      } : current);
+    } catch (error) {
+      setImportSession((current) => current?.id === sessionId ? {
+        ...current,
+        stage: "error",
+        error: error?.message || "ไม่สามารถอ่านไฟล์นี้ได้",
+      } : current);
+    }
+  };
+
+  const handleImportInput = (event) => {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (!file) return;
-    try {
-      const payload = JSON.parse(await file.text());
-      if (payload?.schemaVersion !== SCHEMA_VERSION || !Array.isArray(payload.rows)) {
-        throw new Error("unsupported");
-      }
-      if (!window.confirm("นำเข้าแบบร่างนี้และแทนที่ข้อมูลที่กำลังกรอกอยู่ใช่หรือไม่?")) return;
-      setRows(payload.rows);
-      setProject({ ...EMPTY_PROJECT, ...(payload.project || {}) });
-      setSelectedTemplate(payload.selectedTemplate || "blank");
-      setPriceMode(payload.priceMode === "future" ? "future" : "current");
-      setForecastValue(payload.forecastValue ?? 1);
-      setForecastUnit(payload.forecastUnit || "year");
-      setRates({ ...DEFAULT_RATES, ...(payload.rates || {}) });
-      setExpandedRows(new Set());
-      setSaveStatus("unsaved");
-    } catch {
-      window.alert("ไม่สามารถนำเข้าไฟล์นี้ได้ กรุณาใช้ไฟล์แบบร่าง JSON ที่ส่งออกจาก CostPlanner เวอร์ชันปัจจุบัน");
+    if (file) openImportFile(file);
+  };
+
+  const selectImportSheet = (index) => {
+    setImportSession((current) => {
+      const table = current?.tables?.[index];
+      if (!table) return current;
+      return {
+        ...current,
+        stage: "mapping",
+        selectedSheetIndex: index,
+        table,
+        mapping: table.mapping,
+        projectInfo: mergeDetectedProjectInfo(current.baseProjectInfo, table.projectInfo),
+        previewRows: undefined,
+      };
+    });
+  };
+
+  const updateImportMapping = (field, value) => {
+    setImportSession((current) => ({
+      ...current,
+      mapping: {
+        ...current.mapping,
+        [field]: value === "" ? undefined : Number(value),
+      },
+    }));
+  };
+
+  const createImportPreview = async () => {
+    const snapshot = importSession;
+    if (!snapshot?.table) return;
+    const missingRequired = IMPORT_COLUMN_FIELDS
+      .filter((field) => field.required && snapshot.mapping?.[field.key] === undefined)
+      .map((field) => field.label);
+    if (missingRequired.length) {
+      setImportSession((current) => ({ ...current, mappingError: `กรุณาเลือกคอลัมน์: ${missingRequired.join(", ")}` }));
+      return;
     }
+    setImportSession((current) => ({ ...current, stage: "matching", mappingError: "" }));
+    await new Promise((resolve) => window.setTimeout(resolve, 20));
+    const result = buildImportPreview(snapshot.table, snapshot.mapping, snapshot.fileName);
+    setImportSession((current) => current?.id === snapshot.id ? {
+      ...current,
+      stage: "preview",
+      previewRows: result.previewRows,
+      skippedSummaryRows: result.skippedSummaryRows,
+      truncated: result.truncated,
+    } : current);
+  };
+
+  const updateImportPreviewRow = (id, patch) => {
+    const matchingFields = ["name", "spec", "unit", "section", "category"];
+    const needsRematch = matchingFields.some((key) => Object.prototype.hasOwnProperty.call(patch, key));
+    setImportSession((current) => ({
+      ...current,
+      previewRows: current.previewRows.map((item) => {
+        if (item.id !== id) return item;
+        const next = { ...item, ...patch };
+        next.errors = previewRowErrors(next);
+        if (needsRematch) next.needsRematch = true;
+        return next;
+      }),
+    }));
+  };
+
+  const chooseImportMaterial = (id, material) => {
+    setImportSession((current) => ({
+      ...current,
+      previewRows: current.previewRows.map((item) => item.id === id ? {
+        ...item,
+        selectedMaterialId: material ? materialId(material) : "",
+        unit: item.unit || materialUnit(material),
+        matchMethod: material ? "manual" : item.candidates?.length ? "candidate" : "unmatched",
+        errors: previewRowErrors({ ...item, unit: item.unit || materialUnit(material) }),
+      } : item),
+    }));
+  };
+
+  const rematchImportPreviewRow = (id) => {
+    setImportSession((current) => ({
+      ...current,
+      previewRows: current.previewRows.map((item) => item.id === id ? rematchPreviewItem(item) : item),
+    }));
+  };
+
+  const removeImportPreviewRow = (id) => {
+    setImportSession((current) => ({
+      ...current,
+      previewRows: current.previewRows.filter((item) => item.id !== id),
+    }));
+  };
+
+  const commitImportedRows = () => {
+    const session = importSession;
+    if (!session?.previewRows) return;
+    const importedRows = buildPlannerRowsFromPreview(session.previewRows, session.fileName);
+    if (!importedRows.length) {
+      setImportSession((current) => ({ ...current, importError: "ยังไม่มีแถวที่ผ่านการตรวจสอบ กรุณาแก้ชื่อ ปริมาณ และหน่วยก่อนนำเข้า" }));
+      return;
+    }
+    const matchedCount = session.previewRows.filter((item) => previewMatchStatus(item) === "matched" && !previewRowErrors(item).length).length;
+    const candidateCount = session.previewRows.filter((item) => previewMatchStatus(item) === "candidate" && !previewRowErrors(item).length).length;
+    const unmatchedCount = importedRows.length - matchedCount;
+    setRows((current) => session.importMode === "append" ? [...current, ...importedRows] : importedRows);
+    if (session.importMode === "replace") setSelectedTemplate("blank");
+    if (session.applyProjectInfo && Object.keys(session.projectInfo || {}).length) {
+      setProject((current) => ({ ...current, ...session.projectInfo }));
+    }
+    const usedSections = new Set(importedRows.map((row) => row.sectionId));
+    setCollapsedSections(new Set(SECTION_DEFINITIONS.filter((section) => !usedSections.has(section.id)).map((section) => section.id)));
+    setExpandedRows(new Set(importedRows.filter((row) => !row.materialId).map((row) => row.id)));
+    setImportNotice({
+      count: importedRows.length,
+      matchedCount,
+      candidateCount,
+      unmatchedCount,
+      fileName: session.fileName,
+    });
+    setSaveStatus("unsaved");
+    closeImportDialog();
+  };
+
+  const restoreBackup = () => {
+    const payload = importSession?.backupPayload;
+    if (!isCostPlannerBackup(payload)) return;
+    setRows(payload.rows);
+    setProject({ ...EMPTY_PROJECT, ...(payload.project || {}) });
+    setSelectedTemplate(payload.selectedTemplate || "blank");
+    setPriceMode(payload.priceMode === "future" ? "future" : "current");
+    setForecastValue(payload.forecastValue ?? 1);
+    setForecastUnit(payload.forecastUnit || "year");
+    setRates({ ...DEFAULT_RATES, ...(payload.rates || {}) });
+    setExpandedRows(new Set());
+    setCollapsedSections(new Set());
+    setImportNotice({ count: payload.rows.length, matchedCount: 0, candidateCount: 0, unmatchedCount: 0, fileName: importSession.fileName, backup: true });
+    setSaveStatus("unsaved");
+    closeImportDialog();
   };
 
   const resetPlanner = () => {
@@ -1063,6 +2034,7 @@ export default function CostPlanner() {
           ? "ปานกลาง"
           : "ต่ำ";
   const showMobileTotalBar = activeRows.length > 0 && !summaryInView;
+  const selectedTemplateInfo = TEMPLATE_DEFINITIONS.find((template) => template.id === selectedTemplate) || TEMPLATE_DEFINITIONS[0];
 
   return (
     <>
@@ -1094,6 +2066,19 @@ export default function CostPlanner() {
                 ? "โปรดอนุญาตพื้นที่จัดเก็บของเว็บไซต์ หรือสำรองข้อมูลเป็น JSON"
                 : "กดบันทึกก่อนปิดหรือรีเฟรชหน้า"}</span>
           </div>
+        </div>
+      )}
+
+      {importNotice && (
+        <div className="boq-import-feedback" role="status">
+          <CheckCircle2 size={18} />
+          <div>
+            <strong>{importNotice.backup ? "กู้คืนแบบร่างเรียบร้อย" : `นำเข้า BOQ ${importNotice.count} รายการเรียบร้อย`}</strong>
+            <span>{importNotice.backup
+              ? `${importNotice.fileName} ถูกกู้คืนแทนข้อมูลเดิมแล้ว`
+              : `จับคู่และใช้ราคาจาก data.js ได้ ${importNotice.matchedCount} รายการ • ต้องตรวจหรือเลือกวัสดุเพิ่ม ${importNotice.unmatchedCount} รายการ • ไฟล์ ${importNotice.fileName}`}</span>
+          </div>
+          <button type="button" onClick={() => setImportNotice(null)} aria-label="ปิดข้อความ">×</button>
         </div>
       )}
 
@@ -1129,7 +2114,7 @@ export default function CostPlanner() {
       </section>
 
       <section className="card boq-template-card">
-        <div className="boq-step-head"><div className="boq-step-number">2</div><div><h2>เลือกแม่แบบรายการงาน</h2><p>แม่แบบเป็นจุดเริ่มต้น ผู้ใช้ยังเพิ่ม ลบ ทำซ้ำ และแก้สเปกทุกรายการได้</p></div></div>
+        <div className="boq-step-head"><div className="boq-step-number">2</div><div><h2>เลือกวิธีเริ่มต้น BOQ</h2><p>เริ่มจากแม่แบบของระบบ หรือนำเข้าไฟล์ BOQ ที่มีอยู่แล้ว เลือกเพียงวิธีเดียว</p></div></div>
         <div className="boq-template-grid">
           {TEMPLATE_DEFINITIONS.map((template) => (
             <button key={template.id} type="button" className={selectedTemplate === template.id ? "active" : ""} onClick={() => setSelectedTemplate(template.id)}>
@@ -1139,18 +2124,50 @@ export default function CostPlanner() {
             </button>
           ))}
         </div>
-        <div className="boq-template-actions">
-          <button type="button" className="primary-btn" onClick={applyTemplate}><FileSpreadsheet size={16} /> ใช้แม่แบบที่เลือก</button>
-          <div className="boq-draft-actions">
-            <div className="boq-io-group">
-              <button type="button" className="secondary-btn" onClick={exportDraft}><FileJson size={16} /> สำรอง JSON</button>
-              <i />
-              <button type="button" className="secondary-btn" onClick={() => importRef.current?.click()}><Upload size={16} /> นำเข้าแบบร่าง</button>
-            </div>
-            <button type="button" className="secondary-btn danger" onClick={resetPlanner}><RotateCcw size={16} /> เริ่มใหม่</button>
+        <div className="boq-template-start">
+          <div className="boq-template-start-copy">
+            <span className="boq-method-label">วิธีที่ 1 · เริ่มจากแม่แบบ</span>
+            <strong>{selectedTemplateInfo.name}</strong>
+            <small>สร้างรายการตั้งต้น {selectedTemplateInfo.rows.length.toLocaleString("th-TH")} รายการ และแก้ไขรายละเอียดภายหลังได้</small>
           </div>
-          <input ref={importRef} type="file" accept="application/json,.json" hidden onChange={importDraft} />
+          <button type="button" className="primary-btn boq-use-template-btn" onClick={applyTemplate}><FileSpreadsheet size={17} /> ใช้แม่แบบนี้</button>
         </div>
+
+        <div className="boq-start-divider"><span>หรือ</span></div>
+
+        <div
+          className={`boq-import-dropzone ${importDragging ? "dragging" : ""}`}
+          onDragEnter={(event) => { event.preventDefault(); setImportDragging(true); }}
+          onDragOver={(event) => { event.preventDefault(); setImportDragging(true); }}
+          onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setImportDragging(false); }}
+          onDrop={(event) => {
+            event.preventDefault();
+            setImportDragging(false);
+            const file = event.dataTransfer.files?.[0];
+            if (file) openImportFile(file);
+          }}
+        >
+          <span className="boq-import-drop-icon"><Upload size={23} /></span>
+          <div className="boq-import-drop-copy">
+            <span className="boq-method-label">วิธีที่ 2 · นำเข้าไฟล์ BOQ</span>
+            <strong>ลากไฟล์มาวาง หรือเลือกไฟล์จากเครื่อง</strong>
+            <small>ระบบจะเปิด Preview ให้ตรวจคอลัมน์และ Material Matching ก่อนเพิ่มรายการเข้า CostPlanner</small>
+            <div className="boq-import-formats" aria-label="ประเภทไฟล์ที่รองรับ"><span>XLSX</span><span>XLS</span><span>CSV</span><span>JSON</span><span>PDF</span></div>
+          </div>
+          <div className="boq-import-drop-action">
+            <button type="button" className="primary-btn" onClick={() => importRef.current?.click()}><Upload size={16} /> เลือกไฟล์ BOQ</button>
+            <small><CheckCircle2 size={12} /> ประมวลผลใน Browser</small>
+          </div>
+        </div>
+
+        <div className="boq-draft-tools">
+          <div className="boq-draft-tools-copy"><FileJson size={18} /><span><strong>เครื่องมือแบบร่าง</strong><small>สำรองข้อมูลก่อนเปลี่ยนแม่แบบหรือเริ่มงานใหม่</small></span></div>
+          <div className="boq-draft-tool-actions">
+            <button type="button" className="secondary-btn" onClick={exportDraft}><FileJson size={15} /> สำรอง JSON</button>
+            <button type="button" className="secondary-btn danger" onClick={resetPlanner}><RotateCcw size={15} /> เริ่มใหม่</button>
+          </div>
+        </div>
+        <input ref={importRef} type="file" accept={IMPORT_ACCEPT} hidden onChange={handleImportInput} />
       </section>
 
       <section className="card boq-price-mode-card">
@@ -1280,7 +2297,326 @@ export default function CostPlanner() {
           <button type="button" onClick={() => document.getElementById("boq-summary")?.scrollIntoView({ behavior: "smooth", block: "start" })}>ดูสรุป <ChevronUp size={16} /></button>
         </div>
       )}
+
+      {importSession && (
+        <ImportBOQDialog
+          session={importSession}
+          onClose={closeImportDialog}
+          onChooseFile={() => importRef.current?.click()}
+          onSelectSheet={selectImportSheet}
+          onUpdateMapping={updateImportMapping}
+          onCreatePreview={createImportPreview}
+          onBackToMapping={() => setImportSession((current) => ({ ...current, stage: "mapping", importError: "" }))}
+          onUpdateRow={updateImportPreviewRow}
+          onChooseMaterial={chooseImportMaterial}
+          onRematchRow={rematchImportPreviewRow}
+          onRemoveRow={removeImportPreviewRow}
+          onUpdateOptions={(patch) => setImportSession((current) => ({ ...current, ...patch }))}
+          onCommit={commitImportedRows}
+          onRestoreBackup={restoreBackup}
+        />
+      )}
     </>
+  );
+}
+
+function formatFileSize(bytes) {
+  const value = Number(bytes) || 0;
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function importSourceLabel(sourceType) {
+  return ({
+    excel: "Excel",
+    csv: "CSV",
+    tsv: "TSV",
+    pdf: "PDF Text Layer",
+    "pdf-scan": "PDF Scan",
+    "json-backup": "CostPlanner Backup JSON",
+    "json-external": "External BOQ JSON",
+    image: "Image",
+  })[sourceType] || "ไฟล์ BOQ";
+}
+
+function ImportBOQDialog({
+  session,
+  onClose,
+  onChooseFile,
+  onSelectSheet,
+  onUpdateMapping,
+  onCreatePreview,
+  onBackToMapping,
+  onUpdateRow,
+  onChooseMaterial,
+  onRematchRow,
+  onRemoveRow,
+  onUpdateOptions,
+  onCommit,
+  onRestoreBackup,
+}) {
+  const [previewLimit, setPreviewLimit] = useState(50);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape" && !["reading", "matching"].includes(session.stage)) onClose();
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [session.stage, onClose]);
+
+  useEffect(() => setPreviewLimit(50), [session.id, session.stage]);
+
+  const previewStats = useMemo(() => {
+    const previewRows = session.previewRows || [];
+    const valid = previewRows.filter((item) => !previewRowErrors(item).length);
+    const matched = valid.filter((item) => previewMatchStatus(item) === "matched").length;
+    const candidate = valid.filter((item) => previewMatchStatus(item) === "candidate").length;
+    const mismatch = valid.filter((item) => previewMatchStatus(item) === "unit-mismatch").length;
+    return {
+      total: previewRows.length,
+      valid: valid.length,
+      invalid: previewRows.length - valid.length,
+      matched,
+      candidate,
+      mismatch,
+      unmatched: valid.length - matched - candidate - mismatch,
+    };
+  }, [session.previewRows]);
+
+  const busy = ["reading", "matching"].includes(session.stage);
+  const mappingRows = session.table?.dataRows?.slice(0, 6) || [];
+  const projectEntries = Object.entries(session.projectInfo || {}).filter(([, value]) => value !== "" && value !== null && value !== undefined);
+
+  return (
+    <div className="boq-import-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
+      <section className="boq-import-dialog" role="dialog" aria-modal="true" aria-labelledby="boq-import-title">
+        <header className="boq-import-dialog-head">
+          <div className="boq-import-file-icon"><FileSpreadsheet size={22} /></div>
+          <div>
+            <span>{importSourceLabel(session.sourceType)}</span>
+            <h2 id="boq-import-title">นำเข้าและตรวจสอบ BOQ</h2>
+            <small>{session.fileName} • {formatFileSize(session.fileSize)}</small>
+          </div>
+          <button type="button" onClick={onClose} disabled={busy} aria-label="ปิดหน้าต่างนำเข้า">×</button>
+        </header>
+
+        <div className="boq-import-progress" aria-label="ขั้นตอนนำเข้า">
+          <span className={["reading", "mapping", "matching", "preview", "backup"].includes(session.stage) ? "active" : ""}><b>1</b> อ่านไฟล์</span>
+          <i />
+          <span className={["mapping", "matching", "preview"].includes(session.stage) ? "active" : ""}><b>2</b> จับคู่คอลัมน์</span>
+          <i />
+          <span className={session.stage === "preview" ? "active" : ""}><b>3</b> ตรวจรายการ</span>
+        </div>
+
+        <div className="boq-import-dialog-body">
+          {session.stage === "reading" && (
+            <div className="boq-import-state">
+              <span className="boq-import-spinner" />
+              <strong>กำลังอ่านไฟล์ใน Browser</strong>
+              <p>ไฟล์ไม่ถูกส่งไป Backend หรือบริการภายนอก</p>
+            </div>
+          )}
+
+          {session.stage === "matching" && (
+            <div className="boq-import-state">
+              <span className="boq-import-spinner" />
+              <strong>กำลังตรวจข้อมูลและค้นหา Material Candidate</strong>
+              <p>เปรียบเทียบชื่อ Keyword ขนาด Specification หน่วย และหมวดกับ data.js</p>
+            </div>
+          )}
+
+          {session.stage === "error" && (
+            <div className="boq-import-state error">
+              <AlertTriangle size={36} />
+              <strong>อ่านไฟล์ไม่สำเร็จ</strong>
+              <p>{session.error}</p>
+              <button type="button" className="primary-btn" onClick={onChooseFile}>เลือกไฟล์อื่น</button>
+            </div>
+          )}
+
+          {session.stage === "ocr-required" && (
+            <div className="boq-import-state warning">
+              <AlertTriangle size={36} />
+              <strong>{session.message}</strong>
+              <p>{session.detail}</p>
+              {session.previewUrl && <img className="boq-import-image-preview" src={session.previewUrl} alt={`ตัวอย่าง ${session.fileName}`} />}
+              {session.pageCount && <small>ตรวจพบ {session.pageCount} หน้า แต่ไม่พบ Text Layer ที่เพียงพอ</small>}
+              <div className="boq-import-state-actions"><button type="button" className="secondary-btn" onClick={onClose}>ปิด</button><button type="button" className="primary-btn" onClick={onChooseFile}>เลือก Excel / CSV แทน</button></div>
+            </div>
+          )}
+
+          {session.stage === "backup" && (
+            <div className="boq-import-backup">
+              <div className="boq-import-callout success"><CheckCircle2 size={20} /><span><strong>ตรวจพบ CostPlanner Backup JSON</strong><small>ไฟล์นี้จะแทนที่ข้อมูลโครงการ รายการ BOQ ฐานราคา และอัตราบวกเพิ่มทั้งหมด</small></span></div>
+              <div className="boq-import-backup-summary">
+                <div><span>ชื่อโครงการ</span><strong>{session.backupPayload?.project?.name || "ไม่ระบุ"}</strong></div>
+                <div><span>จำนวนรายการ</span><strong>{(session.backupPayload?.rows?.length || 0).toLocaleString("th-TH")}</strong></div>
+                <div><span>Schema</span><strong>Version {session.backupPayload?.schemaVersion}</strong></div>
+              </div>
+              <div className="boq-import-footer inline"><button type="button" className="secondary-btn" onClick={onClose}>ยกเลิก</button><button type="button" className="primary-btn" onClick={onRestoreBackup}>กู้คืนแบบร่างและแทนที่ข้อมูลเดิม</button></div>
+            </div>
+          )}
+
+          {session.stage === "mapping" && session.table && (
+            <>
+              <div className="boq-import-section-head"><div><strong>ตรวจ Sheet และจับคู่คอลัมน์</strong><span>ระบบเดาคอลัมน์ให้แล้ว แต่คุณเปลี่ยนได้ก่อนสร้าง Preview</span></div><span className="boq-client-badge">ประมวลผลใน Browser</span></div>
+
+              {session.tables?.length > 1 && (
+                <label className="boq-import-sheet-select"><span>Sheet ที่ต้องการนำเข้า</span><select value={session.selectedSheetIndex} onChange={(event) => onSelectSheet(Number(event.target.value))}>{session.tables.map((table, index) => <option key={`${table.name}-${index}`} value={index}>{table.name} • {table.dataRows.length.toLocaleString("th-TH")} แถว</option>)}</select></label>
+              )}
+
+              {session.warnings?.filter(Boolean).map((warning, index) => <div className="boq-import-callout warning" key={`${warning}-${index}`}><Info size={18} /><span><strong>ผลการอ่านเอกสาร</strong><small>{warning}</small></span></div>)}
+
+              {projectEntries.length > 0 && (
+                <div className="boq-import-project-detected">
+                  <strong>ข้อมูลโครงการที่ตรวจพบ</strong>
+                  <div>{projectEntries.map(([key, value]) => <span key={key}><small>{({ name: "โครงการ", owner: "เจ้าของ", location: "สถานที่", drawingNo: "เลขที่แบบ", estimator: "ผู้ประมาณ", estimateDate: "วันที่", buildingArea: "พื้นที่" })[key] || key}</small><b>{String(value)}</b></span>)}</div>
+                </div>
+              )}
+
+              <div className="boq-import-mapping-grid">
+                {IMPORT_COLUMN_FIELDS.map((field) => (
+                  <label key={field.key} className={field.required ? "required" : ""}>
+                    <span>{field.label}{field.required && <b>*</b>}</span>
+                    <select value={session.mapping?.[field.key] ?? ""} onChange={(event) => onUpdateMapping(field.key, event.target.value)}>
+                      <option value="">ไม่ใช้คอลัมน์นี้</option>
+                      {session.table.headers.map((header, index) => <option key={`${field.key}-${index}`} value={index}>{header}</option>)}
+                    </select>
+                  </label>
+                ))}
+              </div>
+              {session.mappingError && <div className="boq-import-inline-error"><AlertTriangle size={15} /> {session.mappingError}</div>}
+
+              <div className="boq-import-raw-preview">
+                <div><strong>ตัวอย่างข้อมูลต้นทาง</strong><span>แถวหัวตารางที่ตรวจพบ: {session.table.headerIndex + 1}</span></div>
+                <div className="boq-import-table-scroll"><table><thead><tr>{session.table.headers.map((header, index) => <th key={`${header}-${index}`}>{header}</th>)}</tr></thead><tbody>{mappingRows.map((row, rowIndex) => <tr key={rowIndex}>{session.table.headers.map((_, columnIndex) => <td key={columnIndex}>{row[columnIndex] || "—"}</td>)}</tr>)}</tbody></table></div>
+              </div>
+
+              <div className="boq-import-footer"><button type="button" className="secondary-btn" onClick={onClose}>ยกเลิก</button><button type="button" className="primary-btn" onClick={onCreatePreview}>ตรวจและค้นหา Material Candidate</button></div>
+            </>
+          )}
+
+          {session.stage === "preview" && (
+            <>
+              <div className="boq-import-section-head"><div><strong>Import Preview</strong><span>ราคาจากไฟล์ต้นทางไม่ถูกนำมาใช้แทน data.js โดยอัตโนมัติ</span></div><button type="button" className="boq-link-button" onClick={onBackToMapping}>ย้อนกลับไปจับคู่คอลัมน์</button></div>
+              <div className="boq-import-stats">
+                <div><span>อ่านได้</span><strong>{previewStats.total}</strong></div>
+                <div className="matched"><span>จับคู่มั่นใจสูง</span><strong>{previewStats.matched}</strong></div>
+                <div className="candidate"><span>มี Candidate</span><strong>{previewStats.candidate}</strong></div>
+                <div className="unmatched"><span>ยังไม่จับคู่</span><strong>{previewStats.unmatched + previewStats.mismatch}</strong></div>
+                <div className="invalid"><span>ข้อมูลไม่ครบ</span><strong>{previewStats.invalid}</strong></div>
+              </div>
+
+              {(session.truncated || session.skippedSummaryRows > 0) && <div className="boq-import-callout warning"><Info size={18} /><span><strong>มีการกรองข้อมูลก่อน Preview</strong><small>{session.truncated ? `แสดงไม่เกิน ${MAX_IMPORT_ROWS.toLocaleString("th-TH")} แถว • ` : ""}{session.skippedSummaryRows ? `ข้ามแถวสรุปรวม ${session.skippedSummaryRows} แถว` : ""}</small></span></div>}
+
+              <div className="boq-import-preview-list">
+                {(session.previewRows || []).slice(0, previewLimit).map((item, index) => (
+                  <ImportPreviewRow
+                    key={item.id}
+                    item={item}
+                    index={index}
+                    onUpdate={onUpdateRow}
+                    onChooseMaterial={onChooseMaterial}
+                    onRematch={onRematchRow}
+                    onRemove={onRemoveRow}
+                  />
+                ))}
+              </div>
+              {previewLimit < (session.previewRows?.length || 0) && <button type="button" className="boq-import-load-more" onClick={() => setPreviewLimit((limit) => limit + 50)}>แสดงเพิ่มอีก {Math.min(50, session.previewRows.length - previewLimit)} รายการ</button>}
+
+              <div className="boq-import-options">
+                <div><strong>วิธีนำเข้ารายการ</strong><label><input type="radio" name="boq-import-mode" checked={session.importMode === "replace"} onChange={() => onUpdateOptions({ importMode: "replace" })} /> แทนที่รายการ BOQ ปัจจุบัน</label><label><input type="radio" name="boq-import-mode" checked={session.importMode === "append"} onChange={() => onUpdateOptions({ importMode: "append" })} /> เพิ่มต่อท้ายรายการปัจจุบัน</label></div>
+                {projectEntries.length > 0 && <label className="boq-import-project-option"><input type="checkbox" checked={session.applyProjectInfo} onChange={(event) => onUpdateOptions({ applyProjectInfo: event.target.checked })} /><span><strong>ใช้ข้อมูลโครงการที่ตรวจพบ</strong><small>เติมเฉพาะข้อมูลที่อ่านได้จากไฟล์</small></span></label>}
+              </div>
+              {session.importError && <div className="boq-import-inline-error"><AlertTriangle size={15} /> {session.importError}</div>}
+              <div className="boq-import-footer preview"><span>นำเข้าได้ {previewStats.valid.toLocaleString("th-TH")} รายการ • รายการไม่จับคู่จะเข้า CostPlanner โดยยังไม่มีราคา</span><div><button type="button" className="secondary-btn" onClick={onClose}>ยกเลิก</button><button type="button" className="primary-btn" disabled={!previewStats.valid} onClick={onCommit}>นำเข้า {previewStats.valid.toLocaleString("th-TH")} รายการ</button></div></div>
+            </>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ImportPreviewRow({ item, index, onUpdate, onChooseMaterial, onRematch, onRemove }) {
+  const status = previewMatchStatus(item);
+  const selectedMaterial = selectedPreviewMaterial(item);
+  const [expanded, setExpanded] = useState(status !== "matched" || item.errors.length > 0);
+  const currentUnitOptions = UNIT_OPTIONS.includes(item.unit) || !item.unit ? UNIT_OPTIONS : [item.unit, ...UNIT_OPTIONS];
+  const statusContent = {
+    matched: { label: item.matchMethod === "auto" ? "จับคู่มั่นใจสูง" : "เลือกแล้ว", className: "matched" },
+    candidate: { label: `พบ ${item.candidates.length} Candidate`, className: "candidate" },
+    unmatched: { label: "ยังไม่ได้จับคู่วัสดุ", className: "unmatched" },
+    "unit-mismatch": { label: "หน่วยยังไม่ตรง", className: "mismatch" },
+  }[status];
+
+  return (
+    <article className={`boq-import-preview-row ${statusContent.className} ${item.errors.length ? "invalid" : ""}`}>
+      <button type="button" className="boq-import-preview-summary" onClick={() => setExpanded((value) => !value)}>
+        <span className="boq-import-row-number">{index + 1}</span>
+        <span className="boq-import-row-copy"><strong>{item.name || "ไม่มีชื่อรายการ"}</strong><small>{item.quantity ?? "—"} {item.unit || "ไม่ระบุหน่วย"}{item.spec ? ` • ${item.spec}` : ""}</small></span>
+        <span className={`boq-import-match-badge ${statusContent.className}`}>{statusContent.label}</span>
+        {expanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
+      </button>
+
+      {expanded && (
+        <div className="boq-import-preview-detail">
+          <div className="boq-import-edit-grid">
+            <label><span>รหัส</span><input value={item.code || ""} onChange={(event) => onUpdate(item.id, { code: event.target.value })} /></label>
+            <label className="wide"><span>ชื่อรายการ</span><input value={item.name || ""} onChange={(event) => onUpdate(item.id, { name: event.target.value })} /></label>
+            <label><span>ปริมาณ</span><input type="number" min="0" step="0.001" value={item.quantity ?? ""} onChange={(event) => onUpdate(item.id, { quantity: event.target.value === "" ? null : parseLocaleNumber(event.target.value) })} /></label>
+            <label><span>หน่วย</span><select value={item.unit || ""} onChange={(event) => onUpdate(item.id, { unit: event.target.value })}><option value="">เลือกหน่วย</option>{currentUnitOptions.map((unit) => <option key={unit} value={unit}>{unit}</option>)}</select></label>
+            <label className="wide"><span>ขนาด / Specification</span><input value={item.spec || ""} onChange={(event) => onUpdate(item.id, { spec: event.target.value })} /></label>
+            <label><span>หมวดงาน</span><select value={item.section || ""} onChange={(event) => onUpdate(item.id, { section: event.target.value })}><option value="">ให้ระบบจัดหมวด</option>{item.section && !SECTION_DEFINITIONS.some((section) => section.title === item.section) && <option value={item.section}>{item.section}</option>}{SECTION_DEFINITIONS.map((section) => <option key={section.id} value={section.title}>{section.title}</option>)}</select></label>
+          </div>
+
+          {item.errors.length > 0 && <div className="boq-import-inline-error"><AlertTriangle size={15} /> แถว {item.sourceRow}: {item.errors.join(" • ")}</div>}
+          {item.sourceRate !== null && item.sourceRate !== undefined && <div className="boq-import-source-rate"><Info size={15} /><span>ราคาเดิมในเอกสาร <b>{formatPrice(item.sourceRate)} บาท/{item.unit || "หน่วย"}</b> — แสดงเพื่อเทียบเท่านั้น ยังไม่นำไปคำนวณ</span></div>}
+
+          <div className="boq-import-candidate-head"><span><strong>Material Matching</strong><small>เลือกเองได้เสมอ ระบบจะใช้ราคาเฉพาะจาก material ที่เลือกใน data.js</small></span>{item.needsRematch && <button type="button" onClick={() => onRematch(item.id)}><Search size={14} /> ค้นหา Candidate ใหม่</button>}</div>
+
+          {item.candidates?.length > 0 && (
+            <div className="boq-import-candidates">
+              {item.candidates.map((candidate) => {
+                const candidateId = materialId(candidate.material);
+                const selected = String(item.selectedMaterialId) === candidateId;
+                const compatible = candidate.unitScore >= 0.9;
+                return (
+                  <div key={candidateId} className={`${selected ? "selected" : ""} ${compatible ? "" : "unit-mismatch"}`}>
+                    <span><strong>{materialName(candidate.material)}</strong><small>{candidate.material?.category || "ไม่ระบุหมวด"} • {materialUnit(candidate.material)} • รหัส {candidateId}</small><em>{candidate.reasons.length ? candidate.reasons.join(" • ") : "ชื่อใกล้เคียงบางส่วน"}</em></span>
+                    <span className="boq-import-candidate-price"><strong>{formatPrice(materialPrice(candidate.material))} บาท</strong><small>/{materialUnit(candidate.material) || "หน่วย"}</small><em>{Math.round(candidate.score * 100)}%</em></span>
+                    <button type="button" className={selected ? "selected" : ""} onClick={() => onChooseMaterial(item.id, candidate.material)}>{selected ? "กำลังใช้รายการนี้" : "ใช้วัสดุนี้"}</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {!item.candidates?.length && <div className="boq-import-no-candidate"><AlertTriangle size={18} /><span><strong>ยังไม่ได้จับคู่วัสดุ</strong><small>ค้นหาและเลือกจาก MaterialPicker ด้านล่าง ระบบจะไม่เดาราคาให้</small></span></div>}
+
+          <div className="boq-import-picker-wrap">
+            <MaterialPicker
+              materials={materials}
+              value={item.selectedMaterialId || ""}
+              onChange={(_, material) => onChooseMaterial(item.id, material)}
+              label="เลือกหรือแก้ไขวัสดุจาก data.js"
+              placeholder="ค้นหาชื่อ รหัส หมวด หรือหน่วย"
+            />
+            {selectedMaterial && <button type="button" className="boq-link-button danger" onClick={() => onChooseMaterial(item.id, null)}>ยกเลิกการเลือกวัสดุ</button>}
+          </div>
+          {status === "unit-mismatch" && <div className="boq-import-inline-error"><AlertTriangle size={15} /> วัสดุที่เลือกมีหน่วย {materialUnit(selectedMaterial)} แต่รายการ BOQ ใช้ {item.unit} จึงยังไม่ใช้ราคาอัตโนมัติ กรุณาเลือกวัสดุ/หน่วยที่ตรงกัน</div>}
+
+          <div className="boq-import-row-actions"><span>แถวต้นทาง {item.sourceRow}</span><button type="button" className="danger" onClick={() => onRemove(item.id)}><Trash2 size={14} /> ไม่นำเข้าแถวนี้</button></div>
+        </div>
+      )}
+    </article>
   );
 }
 
@@ -1340,13 +2676,8 @@ function RowStatus({ row, priceMode }) {
 }
 
 function RowDetails({ row, priceMode, onUpdate, onUpdateNumber, onDuplicate, onDelete, onMove }) {
-  const [materialQuery, setMaterialQuery] = useState("");
-  const keywordKey = (row.keywords || []).join("|");
-  const options = useMemo(
-    () => row.costTypes.material ? materialOptionsFor(row, materialQuery) : [],
-    [row.costTypes.material, row.unit, row.materialId, row.name, row.spec, keywordKey, materialQuery]
-  );
   const effectiveMaterial = row.catalog?.material;
+  const selectedRowMaterial = row.materialId ? MATERIAL_BY_ID.get(String(row.materialId)) : null;
   const unitOptions = UNIT_OPTIONS.includes(row.unit) ? UNIT_OPTIONS : [...UNIT_OPTIONS, row.unit];
   const toggleCost = (key) => onUpdate(row.id, {
     costTypes: { ...row.costTypes, [key]: !row.costTypes[key] },
@@ -1390,20 +2721,18 @@ function RowDetails({ row, priceMode, onUpdate, onUpdateNumber, onDuplicate, onD
             <span className="boq-source-pill">{row.currentSource}</span>
           </div>
           <div className="boq-detail-grid rates">
-            <label className="boq-field wide">
+            <div className="boq-field wide">
               <span>เลือกรายการราคากลางภาครัฐ</span>
-              <div className="boq-material-search"><Search size={15} /><input value={materialQuery} onChange={(event) => setMaterialQuery(event.target.value)} placeholder="ค้นหาชื่อ รหัส หรือหมวดวัสดุ" /></div>
-              <select value={row.materialId || ""} onChange={(event) => onUpdate(row.id, { materialId: event.target.value, materialRate: "", futureMaterialRate: "" })}>
-                <option value="">ยังไม่เลือกวัสดุ</option>
-                {options.map((material) => (
-                  <option key={materialId(material)} value={materialId(material)}>
-                    {materialId(material)} — {materialName(material)} • ฿{formatPrice(convertedOfficialPrice(material, row.unit))}/{row.unit}
-                  </option>
-                ))}
-              </select>
-              {!options.length && <small className="boq-inline-warning"><AlertTriangle size={13} /> ยังไม่มีข้อมูลราคากลางที่แปลงเป็นหน่วย {row.unit} ได้</small>}
+              <MaterialPicker
+                materials={materials}
+                value={row.materialId || ""}
+                onChange={(materialIdValue) => onUpdate(row.id, { materialId: materialIdValue, materialRate: "", futureMaterialRate: "" })}
+                label="วัสดุจาก data.js"
+                placeholder="ค้นหาชื่อ รหัส หมวด หรือหน่วย"
+              />
+              {selectedRowMaterial && convertedOfficialPrice(selectedRowMaterial, row.unit) === null && <small className="boq-inline-warning"><AlertTriangle size={13} /> หน่วยวัสดุ ({materialUnit(selectedRowMaterial)}) ไม่ตรงกับหน่วย BOQ ({row.unit}) ระบบจึงยังไม่ใช้ราคา</small>}
               {!row.materialId && number(row.rawMaterialRate) <= 0 && <small className="boq-inline-warning"><AlertTriangle size={13} /> ต้องเลือกวัสดุจริง หรือกรอกราคาวัสดุเองก่อนคำนวณ</small>}
-            </label>
+            </div>
             <TextField
               label="ราคาวัสดุปัจจุบันที่กำหนดเอง"
               type="number"
@@ -1592,7 +2921,6 @@ const BOQ_STYLES = `
   }
 
   .boq-header-actions,
-  .boq-template-actions,
   .boq-cost-type-buttons,
   .boq-row-detail-actions,
   .boq-row-detail-actions > div {
@@ -1603,7 +2931,9 @@ const BOQ_STYLES = `
   }
 
   .boq-header-actions button,
-  .boq-template-actions button,
+  .boq-template-start button,
+  .boq-draft-tool-actions button,
+  .boq-import-drop-action button,
   .boq-download-full,
   .boq-row-detail-actions button {
     display: inline-flex;
@@ -1774,16 +3104,29 @@ const BOQ_STYLES = `
   .boq-template-grid small,
   .boq-price-mode-grid small { color: var(--boq-muted); font-size: 11px; line-height: 1.45; }
   .boq-template-grid em { color: var(--boq-green-dark); font-size: 12px; font-style: normal; font-weight: 700; }
-  .boq-template-actions { align-items: center; margin-top: 13px; padding-top: 13px; border-top: 1px solid var(--boq-line); }
-  .boq-template-actions .primary-btn { min-height: 44px; padding: 0 20px; border-radius: 10px; font-weight: 700; box-shadow: 0 1px 2px rgba(15, 23, 42, .05); transition: transform .15s ease, box-shadow .15s ease; }
-  .boq-template-actions .primary-btn:hover:not(:disabled) { box-shadow: 0 10px 22px rgba(37, 99, 235, .22); transform: translateY(-1px); }
-  .boq-draft-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-wrap: wrap; }
-  .boq-io-group { display: inline-flex; align-items: center; gap: 2px; padding: 3px; border: 1px solid var(--boq-line); border-radius: 12px; background: rgba(148, 163, 184, .05); }
-  .boq-io-group > i { width: 1px; height: 18px; background: var(--boq-line); }
-  .boq-io-group .secondary-btn { min-height: 38px; padding: 0 14px; border: 0; border-radius: 9px; color: var(--boq-muted); background: transparent; box-shadow: none; font-weight: 600; transition: background .15s ease, color .15s ease; }
-  .boq-io-group .secondary-btn:hover { color: var(--boq-ink); background: #fff; box-shadow: 0 1px 3px rgba(15, 23, 42, .1); }
-  .boq-template-actions .danger { min-height: 44px; padding: 0 16px; border: 1px solid rgba(220, 38, 38, .22); border-radius: 10px; color: #b91c1c; background: rgba(220, 38, 38, .04); font-weight: 700; box-shadow: none; transition: background .15s ease, border-color .15s ease; }
-  .boq-template-actions .danger:hover { border-color: rgba(220, 38, 38, .4); background: rgba(220, 38, 38, .09); }
+  .boq-template-start { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 18px; margin-top: 16px; padding: 15px 16px; border: 1px solid #bfdbfe; border-radius: 14px; background: linear-gradient(135deg, #f8fbff 0%, #eff6ff 100%); }
+  .boq-template-start-copy { display: grid; gap: 3px; width: 100%; min-width: 0; }
+  .boq-method-label { color: var(--boq-green-dark); font-size: 10px; font-weight: 900; letter-spacing: .025em; }
+  .boq-template-start-copy > strong { color: var(--boq-ink); font-size: 14px; line-height: 1.45; }
+  .boq-template-start-copy > small { color: var(--boq-muted); font-size: 11px; line-height: 1.45; }
+  .boq-template-start > .boq-use-template-btn { width: auto !important; min-width: 170px; max-width: 220px; min-height: 44px; padding: 0 20px; justify-self: end; align-self: center; flex: none !important; border-radius: 10px; font-weight: 800; box-shadow: 0 7px 18px rgba(37, 99, 235, .18); transition: transform .15s ease, box-shadow .15s ease; }
+  .boq-template-start > .boq-use-template-btn:hover:not(:disabled) { box-shadow: 0 11px 24px rgba(37, 99, 235, .26); transform: translateY(-1px); }
+
+  .boq-start-divider { display: flex; align-items: center; gap: 12px; margin: 12px 0; color: #94a3b8; }
+  .boq-start-divider::before, .boq-start-divider::after { content: ""; flex: 1 1 auto; height: 1px; background: var(--boq-line); }
+  .boq-start-divider span { display: grid; place-items: center; min-width: 38px; height: 24px; border: 1px solid var(--boq-line); border-radius: 999px; background: #fff; font-size: 10px; font-weight: 800; }
+
+  .boq-draft-tools { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 13px; padding: 11px 13px; border: 1px solid var(--boq-line); border-radius: 12px; background: #f8fafc; }
+  .boq-draft-tools-copy { display: flex; align-items: center; gap: 9px; min-width: 0; color: #64748b; }
+  .boq-draft-tools-copy > svg { flex: 0 0 auto; }
+  .boq-draft-tools-copy > span { display: grid; gap: 1px; min-width: 0; }
+  .boq-draft-tools-copy strong { color: #334155; font-size: 11px; }
+  .boq-draft-tools-copy small { color: var(--boq-muted); font-size: 10px; line-height: 1.4; }
+  .boq-draft-tool-actions { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
+  .boq-draft-tool-actions .secondary-btn { min-height: 36px; padding: 0 12px; border: 1px solid #cbd5e1; border-radius: 9px; color: #475569; background: #fff; box-shadow: none; font-size: 11px; font-weight: 700; transition: border-color .15s ease, color .15s ease, background .15s ease; }
+  .boq-draft-tool-actions .secondary-btn:hover { border-color: #94a3b8; color: var(--boq-ink); background: #f8fafc; }
+  .boq-draft-tool-actions .danger { border-color: rgba(220, 38, 38, .2); color: #b91c1c; background: #fffafa; }
+  .boq-draft-tool-actions .danger:hover { border-color: rgba(220, 38, 38, .42); color: #991b1b; background: #fef2f2; }
 
   .boq-price-mode-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)) minmax(240px, .8fr); gap: 10px; }
   .boq-price-mode-grid > button { min-height: 98px; }
@@ -1810,7 +3153,7 @@ const BOQ_STYLES = `
   .boq-discipline-overview span { display: grid; gap: 2px; }
   .boq-discipline-overview strong { font-size: 12px; }
   .boq-discipline-overview small { color: var(--boq-muted); font-size: 12px; }
-  .boq-category-nav { display: flex; gap: 6px; margin-top: 10px; padding: 3px 1px 5px; overflow-x: auto; scrollbar-width: thin; }
+  .boq-category-nav { display: flex; gap: 6px; margin-top: 10px; padding: 3px 1px 5px; overflow-x: auto; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
   .boq-category-nav button { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; min-height: 44px; padding: 4px 9px 4px 5px; border: 1px solid var(--boq-line); border-radius: 999px; color: var(--boq-muted); background: #fff; font: inherit; font-size: 12px; cursor: pointer; }
   .boq-category-nav b { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; color: #fff; background: var(--boq-green); font-size: 12px; }
 
@@ -1830,7 +3173,7 @@ const BOQ_STYLES = `
   .boq-section-chevron { color: var(--boq-muted); }
   .boq-section-body { border-top: 1px solid var(--boq-line); }
 
-  .boq-table-scroll { width: 100%; overflow-x: auto; }
+  .boq-table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .boq-table { width: 100%; min-width: 1000px; border-collapse: collapse; table-layout: fixed; color: var(--boq-ink); font-size: 11px; }
   .boq-table th { padding: 9px 7px; border-bottom: 1px solid var(--boq-line); color: #60736f; background: #f5f9f8; font-size: 11px; font-weight: 800; text-align: right; white-space: nowrap; }
   .boq-table th:nth-child(1) { width: 54px; text-align: left; }
@@ -1956,6 +3299,180 @@ const BOQ_STYLES = `
   .boq-insight-card strong { overflow: hidden; color: var(--boq-ink); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
   .boq-mobile-total-bar { display: none; }
 
+  .boq-import-feedback { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 10px; margin: 0 0 14px; padding: 12px 14px; border: 1px solid #a7d8c8; border-radius: 12px; color: #175b4e; background: #effaf7; }
+  .boq-import-feedback > svg { margin-top: 1px; }
+  .boq-import-feedback > div { display: grid; gap: 2px; }
+  .boq-import-feedback strong { font-size: 13px; }
+  .boq-import-feedback span { font-size: 12px; line-height: 1.5; }
+  .boq-import-feedback button { width: 28px; height: 28px; border: 0; border-radius: 8px; color: inherit; background: transparent; font-size: 20px; line-height: 1; }
+
+  .boq-import-dropzone { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 15px; width: 100%; min-height: 116px; box-sizing: border-box; padding: 18px; border: 1.5px dashed #93c5fd; border-radius: 15px; color: var(--boq-ink); background: linear-gradient(135deg, #fbfdff 0%, #f8fbff 100%); transition: border-color .18s ease, background .18s ease, box-shadow .18s ease, transform .18s ease; }
+  .boq-import-dropzone:hover { border-color: #60a5fa; background: #f5f9ff; box-shadow: inset 0 0 0 1px rgba(37, 99, 235, .04); }
+  .boq-import-dropzone.dragging { border-color: var(--boq-green); border-style: solid; background: #eff6ff; box-shadow: inset 0 0 0 2px rgba(37, 99, 235, .12); transform: translateY(-1px); }
+  .boq-import-drop-icon { display: grid; place-items: center; width: 50px; height: 50px; border: 1px solid #dbeafe; border-radius: 14px; color: var(--boq-green); background: #fff; box-shadow: 0 7px 20px rgba(37, 99, 235, .1); }
+  .boq-import-drop-copy { display: grid; gap: 4px; min-width: 0; }
+  .boq-import-drop-copy > strong { color: var(--boq-ink); font-size: 14px; line-height: 1.35; }
+  .boq-import-drop-copy > small { max-width: 680px; color: var(--boq-muted); font-size: 11px; line-height: 1.5; }
+  .boq-import-formats { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-top: 4px; }
+  .boq-import-formats span { padding: 3px 7px; border: 1px solid #dbeafe; border-radius: 999px; color: #1d4ed8; background: #fff; font-size: 9px; font-weight: 900; letter-spacing: .025em; }
+  .boq-import-drop-action { display: grid; justify-items: stretch; gap: 6px; min-width: 166px; }
+  .boq-import-drop-action .primary-btn { min-height: 44px; padding: 0 16px; border-radius: 10px; font-weight: 800; white-space: nowrap; box-shadow: 0 7px 18px rgba(37, 99, 235, .18); }
+  .boq-import-drop-action > small { display: flex; align-items: center; justify-content: center; gap: 4px; color: #64748b; font-size: 9px; white-space: nowrap; }
+  .boq-import-drop-action > small svg { color: #16a34a; }
+
+  .boq-import-overlay { position: fixed; z-index: 300; inset: 0; display: grid; place-items: center; padding: 22px; background: rgba(15, 23, 42, .66); -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px); }
+  .boq-import-dialog { display: grid; grid-template-rows: auto auto minmax(0, 1fr); width: min(1120px, 100%); max-height: min(92vh, 900px); overflow: hidden; border: 1px solid rgba(255, 255, 255, .3); border-radius: 20px; background: #fff; box-shadow: 0 28px 90px rgba(2, 6, 23, .38); }
+  .boq-import-dialog-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--boq-line); }
+  .boq-import-file-icon { display: grid; place-items: center; width: 43px; height: 43px; border-radius: 12px; color: var(--boq-green); background: var(--boq-green-soft); }
+  .boq-import-dialog-head > div:nth-child(2) { display: grid; gap: 1px; min-width: 0; }
+  .boq-import-dialog-head span { color: var(--boq-green); font-size: 10px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+  .boq-import-dialog-head h2 { margin: 0; color: var(--boq-ink); font-size: 18px; }
+  .boq-import-dialog-head small { overflow: hidden; color: var(--boq-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+  .boq-import-dialog-head > button { display: grid; place-items: center; width: 36px; height: 36px; border: 0; border-radius: 10px; color: var(--boq-muted); background: #f1f5f9; font-size: 23px; line-height: 1; }
+  .boq-import-dialog-head > button:disabled { opacity: .45; }
+
+  .boq-import-progress { display: flex; align-items: center; justify-content: center; padding: 10px 20px; border-bottom: 1px solid var(--boq-line); background: #f8fafc; }
+  .boq-import-progress span { display: flex; align-items: center; gap: 6px; color: #94a3b8; font-size: 11px; font-weight: 800; }
+  .boq-import-progress span b { display: grid; place-items: center; width: 23px; height: 23px; border-radius: 50%; color: #fff; background: #cbd5e1; font-size: 10px; }
+  .boq-import-progress span.active { color: var(--boq-green-dark); }
+  .boq-import-progress span.active b { background: var(--boq-green); }
+  .boq-import-progress i { width: min(9vw, 90px); height: 1px; margin: 0 10px; background: #dbe4e2; }
+  .boq-import-dialog-body { min-height: 0; overflow: auto; padding: 20px; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+
+  .boq-import-state { display: grid; justify-items: center; gap: 10px; min-height: 330px; align-content: center; padding: 30px; color: var(--boq-muted); text-align: center; }
+  .boq-import-state strong { color: var(--boq-ink); font-size: 17px; }
+  .boq-import-state p { max-width: 620px; margin: 0; font-size: 13px; line-height: 1.6; }
+  .boq-import-state.error > svg, .boq-import-state.warning > svg { color: var(--boq-orange); }
+  .boq-import-spinner { width: 40px; height: 40px; border: 4px solid #dbeafe; border-top-color: var(--boq-green); border-radius: 50%; animation: boq-import-spin .8s linear infinite; }
+  @keyframes boq-import-spin { to { transform: rotate(360deg); } }
+  .boq-import-state-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 8px; }
+  .boq-import-image-preview { max-width: min(620px, 100%); max-height: 310px; object-fit: contain; border: 1px solid var(--boq-line); border-radius: 12px; background: #f8fafc; }
+
+  .boq-import-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 15px; }
+  .boq-import-section-head > div { display: grid; gap: 3px; }
+  .boq-import-section-head strong { color: var(--boq-ink); font-size: 16px; }
+  .boq-import-section-head span { color: var(--boq-muted); font-size: 12px; line-height: 1.5; }
+  .boq-client-badge { flex: 0 0 auto; padding: 5px 9px; border-radius: 999px; color: #166534 !important; background: #dcfce7; font-size: 10px !important; font-weight: 900; }
+  .boq-link-button { padding: 0; border: 0; color: var(--boq-green); background: transparent; font: inherit; font-size: 11px; font-weight: 800; text-decoration: underline; text-underline-offset: 3px; }
+  .boq-link-button.danger { color: var(--boq-red); }
+
+  .boq-import-sheet-select { display: grid; grid-template-columns: 160px minmax(0, 1fr); align-items: center; gap: 10px; margin-bottom: 14px; padding: 11px 13px; border: 1px solid var(--boq-line); border-radius: 11px; background: #fbfdfc; }
+  .boq-import-sheet-select span { color: var(--boq-ink); font-size: 12px; font-weight: 800; }
+  .boq-import-sheet-select select, .boq-import-mapping-grid select, .boq-import-edit-grid input, .boq-import-edit-grid select { width: 100%; min-width: 0; height: 40px; box-sizing: border-box; padding: 0 10px; border: 1px solid #cbd5e1; border-radius: 8px; outline: none; color: var(--boq-ink); background: #fff; font: inherit; font-size: 12px; }
+  .boq-import-sheet-select select:focus, .boq-import-mapping-grid select:focus, .boq-import-edit-grid input:focus, .boq-import-edit-grid select:focus { border-color: var(--boq-green); box-shadow: 0 0 0 3px rgba(37, 99, 235, .1); }
+
+  .boq-import-callout { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 13px; padding: 11px 13px; border: 1px solid #bfdbfe; border-radius: 11px; color: #1e3a8a; background: #eff6ff; }
+  .boq-import-callout.warning { border-color: #f1d29d; color: #7c4a10; background: #fffaf0; }
+  .boq-import-callout.success { border-color: #a7d8c8; color: #175b4e; background: #effaf7; }
+  .boq-import-callout > svg { flex: 0 0 auto; margin-top: 1px; }
+  .boq-import-callout > span { display: grid; gap: 2px; }
+  .boq-import-callout strong { font-size: 12px; }
+  .boq-import-callout small { font-size: 11px; line-height: 1.5; }
+
+  .boq-import-project-detected { margin-bottom: 15px; padding: 13px; border: 1px solid var(--boq-line); border-radius: 12px; }
+  .boq-import-project-detected > strong { display: block; margin-bottom: 9px; color: var(--boq-ink); font-size: 12px; }
+  .boq-import-project-detected > div { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+  .boq-import-project-detected span { display: grid; gap: 2px; min-width: 0; padding: 8px 10px; border-radius: 8px; background: #f8fafc; }
+  .boq-import-project-detected small { color: var(--boq-muted); font-size: 9px; }
+  .boq-import-project-detected b { overflow: hidden; color: var(--boq-ink); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+
+  .boq-import-mapping-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 13px; }
+  .boq-import-mapping-grid label { display: grid; gap: 5px; color: var(--boq-ink); font-size: 11px; font-weight: 800; }
+  .boq-import-mapping-grid label > span { display: flex; gap: 3px; }
+  .boq-import-mapping-grid label b { color: var(--boq-red); }
+  .boq-import-inline-error { display: flex; align-items: flex-start; gap: 7px; margin: 9px 0; padding: 9px 11px; border: 1px solid #fecaca; border-radius: 9px; color: #991b1b; background: #fef2f2; font-size: 11px; line-height: 1.45; }
+  .boq-import-inline-error > svg { flex: 0 0 auto; margin-top: 1px; }
+
+  .boq-import-raw-preview { margin-top: 14px; border: 1px solid var(--boq-line); border-radius: 12px; overflow: hidden; }
+  .boq-import-raw-preview > div:first-child { display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--boq-line); background: #f8fafc; }
+  .boq-import-raw-preview strong { color: var(--boq-ink); font-size: 11px; }
+  .boq-import-raw-preview span { color: var(--boq-muted); font-size: 10px; }
+  .boq-import-table-scroll { overflow: auto; max-height: 230px; }
+  .boq-import-table-scroll table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 10px; }
+  .boq-import-table-scroll th, .boq-import-table-scroll td { max-width: 280px; padding: 8px 10px; border-right: 1px solid var(--boq-line); border-bottom: 1px solid var(--boq-line); overflow: hidden; color: var(--boq-ink); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+  .boq-import-table-scroll th { position: sticky; top: 0; z-index: 1; color: #334155; background: #f1f5f9; }
+
+  .boq-import-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 18px; padding-top: 15px; border-top: 1px solid var(--boq-line); }
+  .boq-import-footer.inline { border-top: 0; }
+  .boq-import-footer.preview { justify-content: space-between; }
+  .boq-import-footer.preview > span { color: var(--boq-muted); font-size: 11px; }
+  .boq-import-footer.preview > div { display: flex; gap: 8px; }
+  .boq-import-footer button { min-height: 40px; }
+
+  .boq-import-backup-summary { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; }
+  .boq-import-backup-summary > div { display: grid; gap: 4px; padding: 16px; border: 1px solid var(--boq-line); border-radius: 12px; background: #fbfdfc; }
+  .boq-import-backup-summary span { color: var(--boq-muted); font-size: 10px; }
+  .boq-import-backup-summary strong { color: var(--boq-ink); font-size: 14px; }
+
+  .boq-import-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
+  .boq-import-stats > div { display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--boq-line); border-radius: 10px; background: #f8fafc; }
+  .boq-import-stats span { color: var(--boq-muted); font-size: 9px; }
+  .boq-import-stats strong { color: var(--boq-ink); font-size: 18px; }
+  .boq-import-stats .matched { border-color: #a7d8c8; background: #effaf7; }
+  .boq-import-stats .candidate { border-color: #bfdbfe; background: #eff6ff; }
+  .boq-import-stats .unmatched, .boq-import-stats .invalid { border-color: #f1d29d; background: #fffaf0; }
+
+  .boq-import-preview-list { display: grid; gap: 8px; }
+  .boq-import-preview-row { border: 1px solid var(--boq-line); border-left: 4px solid #94a3b8; border-radius: 12px; overflow: visible; background: #fff; }
+  .boq-import-preview-row.matched { border-left-color: #16a34a; }
+  .boq-import-preview-row.candidate { border-left-color: #2563eb; }
+  .boq-import-preview-row.unmatched, .boq-import-preview-row.mismatch, .boq-import-preview-row.invalid { border-left-color: #d97706; }
+  .boq-import-preview-summary { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto 18px; align-items: center; gap: 9px; width: 100%; min-height: 64px; padding: 10px 12px; border: 0; border-radius: 11px; color: var(--boq-ink); background: #fff; text-align: left; }
+  .boq-import-row-number { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; color: var(--boq-green-dark); background: var(--boq-green-soft); font-size: 10px; font-weight: 900; }
+  .boq-import-row-copy { display: grid; gap: 3px; min-width: 0; }
+  .boq-import-row-copy strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+  .boq-import-row-copy small { overflow: hidden; color: var(--boq-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+  .boq-import-match-badge { padding: 5px 8px; border-radius: 999px; font-size: 9px; font-weight: 900; white-space: nowrap; }
+  .boq-import-match-badge.matched { color: #166534; background: #dcfce7; }
+  .boq-import-match-badge.candidate { color: #1d4ed8; background: #dbeafe; }
+  .boq-import-match-badge.unmatched, .boq-import-match-badge.mismatch { color: #92400e; background: #fef3c7; }
+  .boq-import-preview-detail { padding: 14px; border-top: 1px solid var(--boq-line); background: #fbfdfc; }
+  .boq-import-edit-grid { display: grid; grid-template-columns: 110px 2fr 120px 120px; gap: 9px; }
+  .boq-import-edit-grid label { display: grid; align-content: start; gap: 5px; min-width: 0; color: var(--boq-ink); font-size: 10px; font-weight: 800; }
+  .boq-import-edit-grid label.wide { grid-column: span 2; }
+  .boq-import-source-rate { display: flex; align-items: flex-start; gap: 7px; margin-top: 9px; padding: 8px 10px; border-radius: 8px; color: #475569; background: #f1f5f9; font-size: 10px; line-height: 1.45; }
+  .boq-import-source-rate > svg { flex: 0 0 auto; }
+
+  .boq-import-candidate-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; margin: 14px 0 8px; }
+  .boq-import-candidate-head > span { display: grid; gap: 2px; }
+  .boq-import-candidate-head strong { color: var(--boq-ink); font-size: 12px; }
+  .boq-import-candidate-head small { color: var(--boq-muted); font-size: 10px; }
+  .boq-import-candidate-head button { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 0 9px; border: 1px solid #bfdbfe; border-radius: 8px; color: #1d4ed8; background: #eff6ff; font: inherit; font-size: 10px; font-weight: 800; }
+  .boq-import-candidates { display: grid; gap: 7px; }
+  .boq-import-candidates > div { display: grid; grid-template-columns: minmax(0, 1fr) 120px auto; align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--boq-line); border-radius: 9px; background: #fff; }
+  .boq-import-candidates > div.selected { border-color: #60a5fa; box-shadow: 0 0 0 2px rgba(37, 99, 235, .09); }
+  .boq-import-candidates > div.unit-mismatch { border-style: dashed; }
+  .boq-import-candidates > div > span:first-child { display: grid; gap: 2px; min-width: 0; }
+  .boq-import-candidates > div > span:first-child strong { color: var(--boq-ink); font-size: 11px; line-height: 1.4; }
+  .boq-import-candidates > div > span:first-child small { color: var(--boq-muted); font-size: 9px; }
+  .boq-import-candidates > div > span:first-child em { color: #2563eb; font-size: 9px; font-style: normal; }
+  .boq-import-candidate-price { display: grid; justify-items: end; gap: 1px; }
+  .boq-import-candidate-price strong { color: var(--boq-ink); font-size: 11px; }
+  .boq-import-candidate-price small { color: var(--boq-muted); font-size: 9px; }
+  .boq-import-candidate-price em { color: #16a34a; font-size: 9px; font-style: normal; font-weight: 900; }
+  .boq-import-candidates button { min-height: 34px; padding: 0 10px; border: 1px solid #bfdbfe; border-radius: 8px; color: #1d4ed8; background: #eff6ff; font: inherit; font-size: 10px; font-weight: 900; white-space: nowrap; }
+  .boq-import-candidates button.selected { border-color: #86efac; color: #166534; background: #dcfce7; }
+  .boq-import-no-candidate { display: flex; align-items: flex-start; gap: 8px; padding: 11px; border: 1px solid #f1d29d; border-radius: 9px; color: #7c4a10; background: #fffaf0; }
+  .boq-import-no-candidate > span { display: grid; gap: 2px; }
+  .boq-import-no-candidate strong { font-size: 11px; }
+  .boq-import-no-candidate small { font-size: 10px; }
+  .boq-import-picker-wrap { display: grid; gap: 6px; margin-top: 10px; }
+  .boq-import-picker-wrap > .boq-link-button { justify-self: end; }
+  .boq-import-row-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--boq-line); }
+  .boq-import-row-actions span { color: var(--boq-muted); font-size: 9px; }
+  .boq-import-row-actions button { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 0 9px; border: 1px solid #fecaca; border-radius: 8px; color: #b91c1c; background: #fff; font: inherit; font-size: 10px; font-weight: 800; }
+  .boq-import-load-more { display: block; min-height: 38px; margin: 10px auto 0; padding: 0 14px; border: 1px solid #bfdbfe; border-radius: 9px; color: #1d4ed8; background: #eff6ff; font: inherit; font-size: 11px; font-weight: 800; }
+
+  .boq-import-options { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; padding: 13px; border: 1px solid var(--boq-line); border-radius: 12px; background: #f8fafc; }
+  .boq-import-options > div { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .boq-import-options > div > strong { width: 100%; color: var(--boq-ink); font-size: 11px; }
+  .boq-import-options label { display: flex; align-items: center; gap: 6px; color: #334155; font-size: 10px; }
+  .boq-import-options input { accent-color: var(--boq-green); }
+  .boq-import-project-option { align-self: center; padding-left: 12px; border-left: 1px solid var(--boq-line); }
+  .boq-import-project-option > span { display: grid; gap: 1px; }
+  .boq-import-project-option strong { font-size: 10px; }
+  .boq-import-project-option small { color: var(--boq-muted); font-size: 9px; }
+
   @media (max-width: 1180px) {
     .boq-project-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .boq-template-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1967,7 +3484,7 @@ const BOQ_STYLES = `
     .boq-field.wide { grid-column: 1 / -1; }
   }
 
-  @media (max-width: 960px) {
+  @media (max-width: 1024px) {
     .boq-flow span { display: none; }
     .boq-flow > i { width: 50px; }
     .boq-project-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1976,9 +3493,14 @@ const BOQ_STYLES = `
     .boq-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
     .boq-summary-step, .boq-summary .eyebrow, .boq-summary h3, .boq-grand-total, .boq-summary-caption, .boq-validation, .boq-download-full { grid-column: 1 / -1; }
     .boq-insight-grid { grid-template-columns: repeat(2, 1fr); }
+    .boq-import-mapping-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .boq-import-edit-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .boq-import-edit-grid label.wide { grid-column: span 1; }
+    .boq-import-candidates > div { grid-template-columns: minmax(0, 1fr) 105px; }
+    .boq-import-candidates > div > button { grid-column: 1 / -1; justify-self: stretch; }
   }
 
-  @media (max-width: 760px) {
+  @media (max-width: 960px) {
     .boq-header-actions { width: 100%; }
     .boq-header-actions button { flex: 1 1 140px; min-height: 44px; }
     .boq-save-feedback { margin-bottom: 12px; }
@@ -1996,12 +3518,11 @@ const BOQ_STYLES = `
     .boq-textarea-field textarea { min-height: 112px; }
     .boq-template-grid { grid-template-columns: 1fr; }
     .boq-template-grid > button { min-height: 82px; }
-    .boq-template-actions { flex-direction: column; align-items: stretch; }
-    .boq-template-actions > .primary-btn { width: 100%; }
-    .boq-draft-actions { width: 100%; margin-left: 0; }
-    .boq-io-group { flex: 1 1 auto; }
-    .boq-template-actions button { min-height: 44px; font-size: 11px; }
-    .boq-io-group .secondary-btn { flex: 1 1 0; justify-content: center; }
+    .boq-template-start { grid-template-columns: minmax(0, 1fr); align-items: stretch; gap: 12px; padding: 13px; }
+    .boq-template-start > .boq-use-template-btn { width: 100% !important; min-width: 0; max-width: none; min-height: 46px; justify-self: stretch; }
+    .boq-draft-tools { align-items: stretch; flex-direction: column; }
+    .boq-draft-tool-actions { display: grid; grid-template-columns: 1fr 1fr; }
+    .boq-draft-tool-actions .secondary-btn { justify-content: center; min-height: 42px; }
     .boq-price-mode-grid { grid-template-columns: 1fr; }
     .boq-price-mode-grid > button { min-height: 86px; }
     .boq-horizon-field { grid-column: auto; }
@@ -2061,18 +3582,85 @@ const BOQ_STYLES = `
     .boq-grand-total { font-size: 25px; }
     .boq-insight-grid { grid-template-columns: 1fr; }
     .boq-insight-card { min-height: 48px; }
-    .boq-mobile-total-bar { position: fixed; z-index: 40; right: 10px; bottom: calc(16px + env(safe-area-inset-bottom)); left: 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 57px; padding: 8px 8px 8px 13px; border: 1px solid #3a8f7d; border-radius: 15px; color: #fff; background: rgba(5, 91, 77, .96); box-shadow: 0 12px 34px rgba(7, 65, 55, .3); backdrop-filter: blur(10px); }
+    .boq-import-feedback { grid-template-columns: auto minmax(0, 1fr) auto; }
+    .boq-import-dropzone { grid-template-columns: auto minmax(0, 1fr); gap: 11px; min-height: 0; padding: 14px; }
+    .boq-import-drop-icon { width: 44px; height: 44px; }
+    .boq-import-drop-action { grid-column: 1 / -1; min-width: 0; }
+    .boq-import-drop-action .primary-btn { width: 100%; min-height: 46px; }
+    .boq-import-overlay { place-items: stretch; padding: 0; }
+    .boq-import-dialog { width: 100%; max-height: 100vh; min-height: 100vh; max-height: 100dvh; min-height: 100dvh; border: 0; border-radius: 0; }
+    .boq-import-dialog-head { padding: max(12px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 12px max(14px, env(safe-area-inset-left)); }
+    .boq-import-dialog-head h2 { font-size: 15px; }
+    .boq-import-dialog-body { padding: 14px max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); }
+    .boq-import-progress { padding: 8px 12px; }
+    .boq-import-progress span { font-size: 0; }
+    .boq-import-progress span b { font-size: 10px; }
+    .boq-import-progress i { flex: 1 1 auto; width: auto; }
+    .boq-import-section-head { align-items: stretch; flex-direction: column; }
+    .boq-client-badge { width: fit-content; }
+    .boq-import-sheet-select { grid-template-columns: 1fr; }
+    .boq-import-project-detected > div, .boq-import-mapping-grid { grid-template-columns: 1fr; }
+    .boq-import-mapping-grid select, .boq-import-sheet-select select, .boq-import-edit-grid input, .boq-import-edit-grid select { height: 46px; font-size: 16px; }
+    .boq-import-footer, .boq-import-footer.preview { align-items: stretch; flex-direction: column; }
+    .boq-import-footer.preview > div { display: grid; grid-template-columns: 1fr 1fr; }
+    .boq-import-footer button { min-height: 44px; }
+    .boq-import-backup-summary { grid-template-columns: 1fr; }
+    .boq-import-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .boq-import-stats > div:first-child { grid-column: 1 / -1; }
+    .boq-import-preview-summary { grid-template-columns: 28px minmax(0, 1fr) 18px; }
+    .boq-import-match-badge { grid-column: 2; width: fit-content; }
+    .boq-import-preview-summary > svg { grid-column: 3; grid-row: 1 / 3; }
+    .boq-import-edit-grid { grid-template-columns: 1fr; }
+    .boq-import-candidate-head { align-items: stretch; flex-direction: column; }
+    .boq-import-candidate-head button { justify-content: center; min-height: 42px; }
+    .boq-import-candidates > div { grid-template-columns: 1fr; }
+    .boq-import-candidate-price { justify-items: start; }
+    .boq-import-candidates > div > button { grid-column: auto; min-height: 42px; }
+    .boq-import-options { grid-template-columns: 1fr; }
+    .boq-import-project-option { padding: 10px 0 0; border-top: 1px solid var(--boq-line); border-left: 0; }
+    .boq-mobile-total-bar { position: fixed; z-index: 40; right: max(10px, env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom)); left: max(10px, env(safe-area-inset-left)); display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 57px; padding: 8px 8px 8px 13px; border: 1px solid #3a8f7d; border-radius: 15px; color: #fff; background: rgba(5, 91, 77, .96); box-shadow: 0 12px 34px rgba(7, 65, 55, .3); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
     .boq-mobile-total-bar > div { display: grid; gap: 1px; min-width: 0; }
-    .boq-mobile-total-bar span { overflow: hidden; color: #d7f1eb; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+    .boq-mobile-total-bar span { overflow: hidden; color: #d7f1eb; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
     .boq-mobile-total-bar strong { overflow: hidden; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
     .boq-mobile-total-bar button { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; min-height: 44px; padding: 0 10px; border: 0; border-radius: 10px; color: var(--boq-green-dark); background: #fff; font: inherit; font-size: 12px; font-weight: 900; }
     .boq-insights.has-mobile-bar { margin-bottom: 88px; }
   }
 
+  @media (min-width: 641px) and (max-width: 960px) {
+    .boq-project-grid,
+    .boq-template-grid,
+    .boq-price-mode-grid,
+    .boq-insight-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .boq-horizon-field { grid-column: 1 / -1; }
+    .boq-template-start { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+    .boq-template-start > .boq-use-template-btn { width: auto !important; min-width: 170px; max-width: 220px; justify-self: end; }
+    .boq-draft-tools { align-items: center; flex-direction: row; }
+    .boq-draft-tool-actions { display: flex; }
+    .boq-discipline-overview { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .boq-import-dropzone { grid-template-columns: auto minmax(0, 1fr) auto; }
+    .boq-import-drop-action { grid-column: auto; min-width: 170px; }
+    .boq-import-drop-action .primary-btn { width: auto; min-height: 44px; }
+    .boq-import-overlay { place-items: center; padding: 16px; }
+    .boq-import-dialog { width: 100%; max-height: calc(100dvh - 32px); min-height: 0; border: 1px solid rgba(255, 255, 255, .3); border-radius: 18px; }
+    .boq-import-dialog-head { padding: 14px 18px; }
+    .boq-import-dialog-body { padding: 18px; }
+    .boq-import-project-detected > div,
+    .boq-import-mapping-grid,
+    .boq-import-edit-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .boq-import-candidates > div { grid-template-columns: minmax(0, 1fr) 105px; }
+    .boq-import-candidates > div > button { grid-column: 1 / -1; }
+    .boq-import-footer,
+    .boq-import-footer.preview { align-items: center; flex-direction: row; }
+    .boq-import-footer.preview > div { display: flex; }
+    .boq-import-options { grid-template-columns: 1fr 1fr; }
+    .boq-import-project-option { padding: 0 0 0 12px; border-top: 0; border-left: 1px solid var(--boq-line); }
+  }
+
   @media (max-width: 390px) {
-    .boq-draft-actions { flex-direction: column; align-items: stretch; }
-    .boq-io-group { width: 100%; }
-    .boq-template-actions .danger { width: 100%; }
+    .boq-draft-tool-actions { grid-template-columns: 1fr; }
+    .boq-import-dropzone { grid-template-columns: 1fr; }
+    .boq-import-drop-icon { justify-self: start; }
+    .boq-import-drop-action { grid-column: auto; }
     .boq-mobile-inputs { grid-template-columns: 1fr; }
     .boq-row-detail-actions > div { grid-template-columns: 1fr; }
     .boq-section-copy em { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2080,7 +3668,7 @@ const BOQ_STYLES = `
   }
 
   @media print {
-    .boq-header-actions, .boq-flow, .boq-template-card, .boq-work-toolbar, .boq-category-nav, .boq-add-row, .boq-mobile-total-bar, .boq-actions-cell, .boq-row-detail-actions { display: none !important; }
+    .boq-header-actions, .boq-flow, .boq-template-card, .boq-work-toolbar, .boq-category-nav, .boq-add-row, .boq-mobile-total-bar, .boq-actions-cell, .boq-row-detail-actions, .boq-import-overlay, .boq-import-feedback { display: none !important; }
     .boq-layout { display: block; }
     .boq-summary-wrap { position: static; margin-top: 16px; }
     .boq-section-card { break-inside: avoid; box-shadow: none; }
