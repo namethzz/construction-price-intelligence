@@ -37,7 +37,7 @@ export default function MaterialPicker({
   const [activeIndex, setActiveIndex] = useState(0);
 
   const selected = useMemo(
-    () => materials.find((item) => String(item?.id) === String(value)) ?? materials[0] ?? null,
+    () => materials.find((item) => String(item?.id) === String(value)) ?? null,
     [materials, value]
   );
 
@@ -170,6 +170,7 @@ export default function MaterialPicker({
                 onKeyDown={handleSearchKeyDown}
                 placeholder={placeholder}
                 role="combobox"
+                aria-label="ค้นหารายการวัสดุ"
                 aria-controls="material-picker-results"
                 aria-expanded={open}
               />
@@ -182,7 +183,7 @@ export default function MaterialPicker({
 
             <label className="mp-category">
               <Layers3 size={17} />
-              <select value={category} onChange={(event) => setCategory(event.target.value)}>
+              <select aria-label="กรองตามหมวดวัสดุ" value={category} onChange={(event) => setCategory(event.target.value)}>
                 <option value="all">ทุกหมวด ({materials.length.toLocaleString("th-TH")})</option>
                 {categories.map((item) => (
                   <option key={item.name} value={item.name}>
@@ -256,34 +257,40 @@ const MATERIAL_PICKER_STYLES = `
   .mp-trigger:hover,.mp-trigger.open { border-color:rgba(37,99,235,.48); box-shadow:0 12px 34px rgba(37,99,235,.1); } .mp-trigger:active { transform:translateY(1px); }
   .mp-trigger-icon { width:40px; height:40px; display:grid; place-items:center; border-radius:12px; color:#2563eb; background:linear-gradient(145deg,rgba(37,99,235,.14),rgba(59,130,246,.06)); }
   .mp-trigger-copy { min-width:0; } .mp-trigger-copy small,.mp-trigger-copy strong,.mp-trigger-copy em,.mp-trigger-price small,.mp-trigger-price strong { display:block; }
-  .mp-trigger-copy small,.mp-trigger-price small { margin-bottom:3px; font-size:9px; font-weight:750; letter-spacing:.04em; opacity:.48; }
-  .mp-trigger-copy strong { overflow:hidden; font-size:12px; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; }
-  .mp-trigger-copy em { margin-top:3px; overflow:hidden; font-size:8px; font-style:normal; opacity:.47; text-overflow:ellipsis; white-space:nowrap; }
-  .mp-trigger-price { min-width:105px; text-align:right; } .mp-trigger-price strong { font-size:13px; color:#1d4ed8; }
+  .mp-trigger-copy small,.mp-trigger-price small { margin-bottom:3px; font-size:11px; font-weight:750; letter-spacing:.03em; opacity:.62; }
+  .mp-trigger-copy strong { overflow:hidden; font-size:13px; line-height:1.4; text-overflow:ellipsis; white-space:nowrap; }
+  .mp-trigger-copy em { margin-top:3px; overflow:hidden; font-size:11px; font-style:normal; opacity:.62; text-overflow:ellipsis; white-space:nowrap; }
+  .mp-trigger-price { min-width:105px; text-align:right; } .mp-trigger-price strong { font-size:14px; color:#1d4ed8; }
   .mp-chevron { opacity:.45; transition:transform .18s ease; } .mp-trigger.open .mp-chevron { transform:rotate(180deg); }
-  .mp-popover { position:absolute; z-index:120; top:calc(100% + 9px); left:0; width:min(760px,calc(100vw - 34px)); overflow:hidden; border:1px solid rgba(148,163,184,.22); border-radius:17px; background:rgba(255,255,255,.985); color:#0f172a; box-shadow:0 26px 70px rgba(15,23,42,.2); backdrop-filter:blur(18px); }
+  .mp-popover { position:absolute; z-index:120; top:calc(100% + 9px); left:0; width:min(760px,calc(100vw - 34px)); overflow:hidden; border:1px solid rgba(148,163,184,.22); border-radius:17px; background:rgba(255,255,255,.985); color:#0f172a; box-shadow:0 26px 70px rgba(15,23,42,.2); -webkit-backdrop-filter:blur(18px); backdrop-filter:blur(18px); }
   .mp-popover-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:15px 16px 12px; border-bottom:1px solid rgba(148,163,184,.14); }
-  .mp-popover-head strong,.mp-popover-head span { display:block; } .mp-popover-head strong { font-size:13px; } .mp-popover-head span { margin-top:3px; font-size:9px; color:#64748b; }
+  .mp-popover-head strong,.mp-popover-head span { display:block; } .mp-popover-head strong { font-size:14px; } .mp-popover-head span { margin-top:3px; font-size:11px; color:#64748b; }
   .mp-popover-head button,.mp-search button { width:34px; height:34px; display:grid; place-items:center; flex:0 0 auto; border:0; border-radius:9px; background:#f1f5f9; color:#64748b; cursor:pointer; }
   .mp-filters { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(220px,.7fr); gap:9px; padding:12px 14px 8px; }
   .mp-search,.mp-category { min-height:43px; display:flex; align-items:center; gap:8px; padding:0 10px; border:1px solid #e2e8f0; border-radius:11px; background:#f8fafc; }
-  .mp-search > svg,.mp-category > svg { flex:0 0 auto; color:#64748b; } .mp-search input,.mp-category select { width:100%; min-width:0; border:0; outline:0; background:transparent; color:#0f172a; font:inherit; font-size:11px; }
+  .mp-search > svg,.mp-category > svg { flex:0 0 auto; color:#64748b; } .mp-search input,.mp-category select { width:100%; min-width:0; border:0; outline:0; background:transparent; color:#0f172a; font:inherit; font-size:12px; }
   .mp-search button { width:28px; height:28px; background:transparent; }
-  .mp-result-summary { min-height:30px; display:flex; align-items:center; justify-content:space-between; gap:10px; padding:0 16px; color:#64748b; font-size:9px; }
+  .mp-result-summary { min-height:44px; display:flex; align-items:center; justify-content:space-between; gap:10px; padding:0 16px; color:#64748b; font-size:11px; }
   .mp-result-summary button { border:0; background:transparent; color:#2563eb; cursor:pointer; font:inherit; font-weight:750; }
   .mp-list { max-height:370px; overflow:auto; padding:4px 8px 8px; overscroll-behavior:contain; scrollbar-width:thin; }
-  .mp-list > button { width:100%; display:grid; grid-template-columns:112px minmax(0,1fr) 105px 24px; align-items:center; gap:10px; padding:10px; border:0; border-radius:11px; background:transparent; color:#0f172a; text-align:left; cursor:pointer; }
+  .mp-list > button { width:100%; min-height:50px; display:grid; grid-template-columns:112px minmax(0,1fr) 105px 24px; align-items:center; gap:10px; padding:10px; border:0; border-radius:11px; background:transparent; color:#0f172a; text-align:left; cursor:pointer; }
   .mp-list > button:hover,.mp-list > button.active { background:#f1f5f9; } .mp-list > button.selected { background:rgba(37,99,235,.08); }
-  .mp-item-code { width:max-content; max-width:112px; padding:5px 7px; overflow:hidden; border-radius:7px; background:#eef2ff; color:#3730a3; font-size:8px; font-weight:800; text-overflow:ellipsis; white-space:nowrap; }
-  .mp-item-copy { min-width:0; } .mp-item-copy strong,.mp-item-copy small { display:block; } .mp-item-copy strong { overflow:hidden; font-size:10px; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; } .mp-item-copy small { margin-top:3px; overflow:hidden; color:#64748b; font-size:8px; text-overflow:ellipsis; white-space:nowrap; }
-  .mp-item-price { text-align:right; color:#0f172a; font-size:10px; font-weight:800; } .mp-item-check { color:#2563eb; }
-  .mp-empty { min-height:160px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; color:#64748b; text-align:center; } .mp-empty strong { color:#334155; font-size:11px; } .mp-empty span { font-size:9px; }
-  .mp-load-more { width:100%; min-height:42px; border:0; border-top:1px solid #e2e8f0; background:#f8fafc; color:#2563eb; cursor:pointer; font:inherit; font-size:10px; font-weight:800; }
+  .mp-item-code { width:max-content; max-width:112px; padding:5px 7px; overflow:hidden; border-radius:7px; background:#eef2ff; color:#3730a3; font-size:11px; font-weight:800; text-overflow:ellipsis; white-space:nowrap; }
+  .mp-item-copy { min-width:0; } .mp-item-copy strong,.mp-item-copy small { display:block; } .mp-item-copy strong { overflow:hidden; font-size:13px; line-height:1.4; text-overflow:ellipsis; white-space:nowrap; } .mp-item-copy small { margin-top:3px; overflow:hidden; color:#64748b; font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
+  .mp-item-price { text-align:right; color:#0f172a; font-size:12px; font-weight:800; } .mp-item-check { color:#2563eb; }
+  .mp-empty { min-height:160px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; color:#64748b; text-align:center; } .mp-empty strong { color:#334155; font-size:13px; } .mp-empty span { font-size:12px; }
+  .mp-load-more { width:100%; min-height:46px; border:0; border-top:1px solid #e2e8f0; background:#f8fafc; color:#2563eb; cursor:pointer; font:inherit; font-size:12px; font-weight:800; }
+  .mp-trigger,.mp-popover button,.mp-popover select,.mp-popover input { touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
+  .mp-trigger:focus-visible,.mp-popover button:focus-visible,.mp-popover select:focus-visible,.mp-popover input:focus-visible { outline:3px solid rgba(37,99,235,.24); outline-offset:2px; }
   @media (max-width:620px) {
     .mp-trigger { grid-template-columns:auto minmax(0,1fr) auto; min-height:70px; } .mp-trigger-price { display:none; }
-    .mp-popover { position:fixed; inset:70px 12px 12px; width:auto; display:flex; flex-direction:column; max-height:none; border-radius:16px; }
+    .mp-popover { position:fixed; top:max(70px,calc(env(safe-area-inset-top) + 12px)); right:max(12px,env(safe-area-inset-right)); bottom:max(12px,env(safe-area-inset-bottom)); left:max(12px,env(safe-area-inset-left)); width:auto; display:flex; flex-direction:column; max-height:none; border-radius:16px; overscroll-behavior:contain; }
     .mp-filters { grid-template-columns:1fr; } .mp-search input,.mp-category select { font-size:16px; }
-    .mp-list { max-height:none; flex:1; } .mp-list > button { grid-template-columns:minmax(86px,105px) minmax(0,1fr) 24px; }
+    .mp-popover-head button,.mp-search button { width:44px; height:44px; }
+    .mp-search,.mp-category { min-height:48px; }
+    .mp-list { max-height:none; flex:1; } .mp-list > button { min-height:58px; grid-template-columns:minmax(86px,105px) minmax(0,1fr) 24px; }
     .mp-item-price { display:none; }
   }
+  @media (max-width:390px) { .mp-trigger-icon { width:36px; height:36px; } .mp-trigger { gap:9px; padding:10px; } .mp-trigger-copy strong { font-size:13px; } }
+  @media (prefers-reduced-motion:reduce) { .mp-root * { scroll-behavior:auto !important; transition-duration:.01ms !important; animation-duration:.01ms !important; } }
 `;

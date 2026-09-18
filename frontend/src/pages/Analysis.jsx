@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { ArrowDownRight, ArrowUpRight, BarChart3, Database, Info, MapPin, TrendingUp } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, CalendarRange, Database, Info, MapPin, TrendingUp } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { getMaterialById, materials, priceData } from "../data.js";
 import MaterialPicker from "../components/MaterialPicker.jsx";
@@ -84,11 +84,14 @@ function trendLabel(change) {
 export default function Analysis() {
   const defaultMaterial = materials[0];
   const [selectedId, setSelectedId] = useState(defaultMaterial?.id ?? "");
-  const [analysisMonths, setAnalysisMonths] = useState(12);
+  const [rangeValue, setRangeValue] = useState(1);
+  const [rangeUnit, setRangeUnit] = useState("year");
   const selected = useMemo(() => getMaterialById(selectedId) || materials[0], [selectedId]);
 
   const fullHistory = useMemo(() => priceData.map((row) => ({ key: row?.key, month: row?.month ?? row?.key, price: getPrice(row, selected?.id), source: row })).filter((row) => row.price !== null), [selected]);
-  const visibleHistory = useMemo(() => fullHistory.slice(-Math.max(1, Math.round(numeric(analysisMonths) ?? 12))), [fullHistory, analysisMonths]);
+  const requestedMonths = Math.max(1, Math.round((numeric(rangeValue) ?? 1) * (rangeUnit === "year" ? 12 : 1)));
+  const visibleHistory = useMemo(() => fullHistory.slice(-requestedMonths), [fullHistory, requestedMonths]);
+  const selectedRangeLabel = `${numeric(rangeValue) ?? 1} ${rangeUnit === "year" ? "ปี" : "เดือน"}`;
   const latestPrice = fullHistory.at(-1)?.price ?? numeric(selected?.price);
   const change1 = getChange(latestPrice, fullHistory.at(-2)?.price);
   const change3 = getChange(latestPrice, fullHistory.at(-4)?.price);
@@ -115,8 +118,8 @@ export default function Analysis() {
       <section className="card an-controls">
         <div className="an-control-grid">
           <div className="an-picker-field"><MaterialPicker materials={materials} value={selected?.id ?? ""} onChange={setSelectedId} label="วัสดุที่ต้องการวิเคราะห์" /></div>
-          <label><span>ช่วงข้อมูลย้อนหลัง</span><div><BarChart3 size={17} /><input inputMode="numeric" type="number" min="1" step="1" value={analysisMonths} onChange={(event) => setAnalysisMonths(event.target.value)} /><i>เดือน</i></div></label>
-          <label><span>พื้นที่</span><div className="readonly"><MapPin size={17} /><strong>กรุงเทพมหานคร (อ้างอิงราคาส่วนกลาง)</strong></div></label>
+          <label className="an-range-field"><span>ดูข้อมูลย้อนหลัง</span><div className="an-simple-range"><CalendarRange size={17} /><input inputMode="numeric" type="number" min="1" step="1" value={rangeValue} onChange={(event) => setRangeValue(event.target.value)} aria-label="จำนวนข้อมูลย้อนหลัง" /><select value={rangeUnit} onChange={(event) => setRangeUnit(event.target.value)} aria-label="หน่วยช่วงย้อนหลัง"><option value="month">เดือน</option><option value="year">ปี</option></select></div><small>{requestedMonths > fullHistory.length ? `มีข้อมูลจริง ${fullHistory.length.toLocaleString("th-TH")} เดือน` : `แสดง ${visibleHistory.length.toLocaleString("th-TH")} เดือน`}</small></label>
+          <label className="an-location-field"><span>พื้นที่อ้างอิง</span><div className="readonly"><MapPin size={18} /><span><strong>กรุงเทพมหานคร</strong><small>อ้างอิงราคาส่วนกลาง</small></span></div></label>
         </div>
       </section>
 
@@ -129,8 +132,8 @@ export default function Analysis() {
 
       <div className="an-main-grid">
         <section className="card an-chart-card">
-          <div className="an-card-head"><div><h2><TrendingUp size={18} /> แนวโน้มราคาย้อนหลัง</h2><p>{selected?.name} • แสดง {visibleHistory.length} เดือนที่มีข้อมูล</p></div><a href={OFFICIAL_PRICE_URL} target="_blank" rel="noreferrer">แหล่งราคาภาครัฐ</a></div>
-          {visibleHistory.length ? <div className="an-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={visibleHistory} margin={{ top: 12, right: 12, left: 2, bottom: 4 }}><defs><linearGradient id="analysisFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2563eb" stopOpacity={0.24} /><stop offset="100%" stopColor="#2563eb" stopOpacity={0} /></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="month" tickLine={false} axisLine={false} /><YAxis width={64} tickLine={false} axisLine={false} domain={["auto", "auto"]} tickFormatter={(value) => `฿${Number(value).toLocaleString("th-TH", { notation: "compact", maximumFractionDigits: 1 })}`} /><Tooltip formatter={(value) => [`฿${formatPrice(value)} ${selected?.unit || ""}`, "ราคา"]} /><Area type="monotone" dataKey="price" stroke="#2563eb" fill="url(#analysisFill)" strokeWidth={2.5} /></AreaChart></ResponsiveContainer></div> : <EmptyFactors text="ยังไม่มีประวัติราคาสำหรับวัสดุนี้" />}
+          <div className="an-card-head"><div><h2><TrendingUp size={18} /> แนวโน้มราคาย้อนหลัง</h2><p>{selected?.name} • {selectedRangeLabel} • แสดงจริง {visibleHistory.length.toLocaleString("th-TH")} เดือน</p></div><a href={OFFICIAL_PRICE_URL} target="_blank" rel="noreferrer">แหล่งราคาภาครัฐ</a></div>
+          {visibleHistory.length ? <div className="an-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={visibleHistory} margin={{ top: 12, right: 12, left: 2, bottom: 4 }}><defs><linearGradient id="analysisFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2563eb" stopOpacity={0.24} /><stop offset="100%" stopColor="#2563eb" stopOpacity={0} /></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="month" tickLine={false} axisLine={false} minTickGap={28} interval="preserveStartEnd" tick={{ fontSize: 11 }} /><YAxis width={64} tickLine={false} axisLine={false} domain={["auto", "auto"]} tickFormatter={(value) => `฿${Number(value).toLocaleString("th-TH", { notation: "compact", maximumFractionDigits: 1 })}`} /><Tooltip formatter={(value) => [`฿${formatPrice(value)} ${selected?.unit || ""}`, "ราคา"]} /><Area type="monotone" dataKey="price" stroke="#2563eb" fill="url(#analysisFill)" strokeWidth={2.5} /></AreaChart></ResponsiveContainer></div> : <EmptyFactors text="ยังไม่มีประวัติราคาสำหรับวัสดุนี้" />}
         </section>
 
         <aside className="card an-reading">
@@ -163,10 +166,17 @@ function EmptyFactors({ text }) {
 const ANALYSIS_STYLES = `
   .an-notice { display:flex; align-items:flex-start; gap:10px; margin-bottom:16px; padding:12px 14px; border-radius:12px; background:rgba(59,130,246,.07); color:#1d4ed8; font-size:12px; line-height:1.55; }
   .an-notice svg { flex:0 0 auto; margin-top:2px; } .an-notice strong,.an-notice span { display:block; } .an-notice span { margin-top:2px; opacity:.8; }
-  .an-controls { margin-bottom:14px; overflow:visible; } .an-control-grid { display:grid; grid-template-columns:minmax(0,1.7fr) minmax(140px,.45fr) minmax(220px,.75fr); align-items:end; gap:11px; } .an-picker-field { min-width:0; }
-  .an-control-grid label > span { display:block; margin-bottom:6px; font-size:11px; font-weight:700; opacity:.68; } .an-control-grid label > div { min-height:45px; display:flex; align-items:center; gap:8px; padding:0 11px; border:1px solid rgba(148,163,184,.23); border-radius:10px; background:rgba(148,163,184,.035); }
-  .an-control-grid > label > div > svg { flex:0 0 auto; opacity:.65; } .an-control-grid > label select,.an-control-grid > label input { width:100%; min-width:0; border:0; outline:0; background:transparent; color:inherit; font:inherit; } .an-control-grid > label input { font-weight:750; } .an-control-grid i { font-size:11px; font-style:normal; opacity:.65; }
-  .an-control-grid .readonly { opacity:.78; } .an-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-bottom:14px; }
+  .an-controls { margin-bottom:14px; padding:16px !important; overflow:visible; } .an-control-grid { display:grid; grid-template-columns:minmax(0,1.55fr) minmax(210px,.55fr) minmax(290px,.7fr); align-items:stretch; gap:12px; } .an-picker-field { min-width:0; }
+  .an-picker-field .mp-trigger { min-height:96px; padding:13px 15px; border-radius:14px; box-shadow:none; }
+  .an-range-field,.an-location-field { min-width:0; min-height:96px; display:grid; align-content:center; padding:12px 14px; border:1px solid rgba(148,163,184,.22); border-radius:14px; background:linear-gradient(180deg,rgba(255,255,255,.94),rgba(248,250,252,.72)); }
+  .an-control-grid > label > span { display:block; margin-bottom:7px; font-size:11px; font-weight:750; opacity:.65; }
+  .an-simple-range { min-height:36px; display:grid; grid-template-columns:auto minmax(42px,1fr) auto; align-items:center; gap:7px; }
+  .an-simple-range svg { flex:0 0 auto; color:#2563eb; opacity:.72; } .an-simple-range input { width:100%; min-width:0; padding:0; border:0; outline:0; background:transparent; color:inherit; font:inherit; font-size:19px; font-weight:850; text-align:center; }
+  .an-simple-range select { width:auto; min-width:70px; padding:5px 4px 5px 9px; border:0; border-left:1px solid rgba(148,163,184,.22); outline:0; background:transparent; color:inherit; font:inherit; font-size:13px; font-weight:750; cursor:pointer; }
+  .an-range-field small { display:block; min-height:14px; margin-top:2px; color:#64748b; font-size:10px; font-weight:500; text-align:center; }
+  .an-location-field > div { display:flex; align-items:center; gap:9px; min-width:0; } .an-location-field > div > svg { flex:0 0 auto; color:#64748b; } .an-location-field > div > span { min-width:0; }
+  .an-location-field strong,.an-location-field small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .an-location-field strong { font-size:14px; } .an-location-field small { margin-top:2px; color:#64748b; font-size:11px; font-weight:500; }
+  .an-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-bottom:14px; }
   .an-metric { padding:14px !important; } .an-metric > span,.an-metric small { display:block; font-size:11px; opacity:.65; } .an-metric strong { display:block; margin:6px 0 4px; font-size:18px; } .an-metric small { min-height:17px; } .an-metric small.up,.an-metric small.down { display:flex; align-items:center; gap:3px; opacity:1; } .an-metric small.up { color:#dc2626; } .an-metric small.down { color:#059669; }
   .an-main-grid { display:grid; grid-template-columns:minmax(0,1.55fr) minmax(260px,.45fr); gap:14px; margin-bottom:14px; } .an-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:13px; }
   .an-card-head h2 { display:flex; align-items:center; gap:7px; margin:0; font-size:15px; } .an-card-head p { margin:4px 0 0; font-size:11px; opacity:.65; } .an-card-head a { color:#2563eb; font-size:11px; font-weight:700; text-decoration:none; }
@@ -175,7 +185,9 @@ const ANALYSIS_STYLES = `
   .an-factor-list { display:grid; gap:8px; } .an-factor-list article { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:11px 12px; border:1px solid rgba(148,163,184,.14); border-radius:9px; } .an-factor-list strong,.an-factor-list small { display:block; } .an-factor-list strong { font-size:11px; } .an-factor-list small { margin-top:3px; font-size:10px; opacity:.63; }
   .an-correlation { min-width:145px; text-align:right; } .an-correlation b,.an-correlation span { display:block; } .an-correlation b { font-size:15px; } .an-correlation span { margin-top:2px; font-size:10px; opacity:.68; }
   .an-empty { min-height:150px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; padding:20px; text-align:center; border:1px dashed rgba(148,163,184,.24); border-radius:10px; } .an-empty svg { opacity:.58; } .an-empty strong { font-size:12px; } .an-empty span { max-width:560px; font-size:11px; line-height:1.55; opacity:.65; }
-  @media (max-width:900px) { .an-control-grid { grid-template-columns:1fr 1fr; } .an-picker-field { grid-column:1/-1; } .an-main-grid { grid-template-columns:1fr; } }
-  @media (max-width:620px) { .an-controls { padding:14px !important; } .an-control-grid { grid-template-columns:1fr; } .an-control-grid > label select,.an-control-grid > label input { font-size:16px; } .an-stats { grid-template-columns:1fr 1fr; } .an-metric strong { font-size:15px; } .an-card-head { flex-direction:column; } .an-chart { height:250px; margin-left:-8px; } .an-factor-list article { align-items:flex-start; flex-direction:column; } .an-correlation { min-width:0; text-align:left; } }
+  @media (max-width:1180px) { .an-control-grid { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } .an-picker-field { grid-column:1/-1; } .an-picker-field .mp-trigger { min-height:82px; } .an-range-field,.an-location-field { min-height:82px; } .an-stats { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+  @media (max-width:900px) { .an-main-grid { grid-template-columns:1fr; } }
+  @media (max-width:700px) { .an-controls { padding:12px !important; } .an-control-grid { grid-template-columns:1fr; gap:10px; } .an-picker-field { grid-column:auto; } .an-picker-field .mp-trigger,.an-range-field,.an-location-field { min-height:78px; } }
+  @media (max-width:620px) { .an-control-grid > label > span,.an-control-grid i,.an-metric > span,.an-metric small,.an-card-head p,.an-card-head a,.an-reading dl div,.an-factor-list strong,.an-factor-list small,.an-correlation span,.an-empty span { font-size:12px; } .an-simple-range input { font-size:20px; } .an-simple-range select { min-width:82px; font-size:16px; } .an-range-field small,.an-location-field small { font-size:11px; } .an-location-field strong { font-size:14px; } .an-stats { grid-template-columns:1fr 1fr; } .an-metric strong { font-size:15px; } .an-card-head { flex-direction:column; } .an-card-head a { min-height:44px; display:flex; align-items:center; } .an-chart { height:250px; margin-left:-8px; } .an-factor-list article { align-items:flex-start; flex-direction:column; } .an-correlation { min-width:0; text-align:left; } }
   @media (max-width:360px) { .an-stats { grid-template-columns:1fr; } }
 `;
