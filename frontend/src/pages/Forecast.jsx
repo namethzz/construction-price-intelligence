@@ -84,7 +84,7 @@ function modelUpdatedAt(material) {
 }
 
 export default function Forecast() {
-  const defaultMaterial = materials.find((item) => String(item.id) === "04") || materials[0];
+  const defaultMaterial = materials[0];
   const [selectedId, setSelectedId] = useState(defaultMaterial?.id ?? "");
   const [search, setSearch] = useState("");
   const [horizonValue, setHorizonValue] = useState(1);
@@ -92,10 +92,12 @@ export default function Forecast() {
 
   const filteredMaterials = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query) return materials;
-    const matches = materials.filter((item) => [item?.id, item?.name, item?.category].some((value) => String(value ?? "").toLowerCase().includes(query)));
+    const matches = (query
+      ? materials.filter((item) => [item?.id, item?.name, item?.category].some((value) => String(value ?? "").toLowerCase().includes(query)))
+      : materials
+    ).slice(0, 50);
     const current = materials.find((item) => String(item.id) === String(selectedId));
-    return current && !matches.some((item) => String(item.id) === String(current.id)) ? [current, ...matches] : matches;
+    return current && !matches.some((item) => String(item.id) === String(current.id)) ? [current, ...matches.slice(0, 49)] : matches;
   }, [search, selectedId]);
 
   const selected = useMemo(() => materials.find((item) => String(item.id) === String(selectedId)) || materials[0], [selectedId]);
@@ -139,7 +141,7 @@ export default function Forecast() {
         <div className="fc-control-grid">
           <label className="fc-field"><span>ค้นหาวัสดุ</span><div><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ชื่อ รหัส หรือหมวดวัสดุ" /></div></label>
           <label className="fc-field"><span>วัสดุที่ต้องการพยากรณ์</span><div><PackageSearch size={17} /><select value={selected?.id ?? ""} onChange={(event) => setSelectedId(event.target.value)}>{filteredMaterials.map((item) => <option key={item.id} value={item.id}>{item.id} — {item.name}</option>)}</select></div></label>
-          <label className="fc-field"><span>พื้นที่วิเคราะห์</span><div className="readonly"><MapPin size={17} /><strong>กรุงเทพมหานคร</strong></div></label>
+          <label className="fc-field"><span>พื้นที่วิเคราะห์</span><div className="readonly"><MapPin size={17} /><strong>กรุงเทพมหานคร (อ้างอิงราคาส่วนกลาง)</strong></div></label>
           <div className="fc-field"><span>ต้องการดูราคาในอีก</span><div className="fc-period"><CalendarRange size={17} /><input inputMode="numeric" type="number" min="0" step="1" value={horizonValue} onChange={(event) => setHorizonValue(event.target.value)} /><select value={horizonUnit} onChange={(event) => setHorizonUnit(event.target.value)}><option value="month">เดือน</option><option value="year">ปี</option></select></div></div>
         </div>
         <div className="fc-target"><span>ช่วงที่เลือก</span><strong>{formatHorizon(horizonMonths)}</strong><i /><span>เดือนเป้าหมาย</span><strong>{targetMonth(horizonMonths)}</strong></div>

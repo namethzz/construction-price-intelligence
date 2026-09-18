@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { ArrowDownRight, ArrowUpRight, BarChart3, Database, MapPin, PackageSearch, RefreshCw, TrendingUp } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { priceData, materialCatalog } from "../data.js";
+import { getMaterialById, priceData, materialCatalog, searchMaterials } from "../data.js";
 import { PageHeader } from "../components/Shared.jsx";
 
 const OFFICIAL_PRICE_URL = "https://index.tpso.go.th/construction-material-prices/prices-building-materials";
@@ -30,7 +30,7 @@ function changePercent(current, previous) {
 }
 
 function datasetSource() {
-  const records = [...priceData, ...materialCatalog];
+  const records = [...priceData, materialCatalog[0]].filter(Boolean);
   const sourceText = records.map((item) => [item?.source, item?.sourceName, item?.source_url, item?.sourceUrl].filter(Boolean).join(" ")).join(" ").toLowerCase();
   const markedMock = records.some((item) => item?.isMock === true || item?.status === "mock" || item?.dataStatus === "mock");
   const official = /tpso|สนค|สำนักงานนโยบายและยุทธศาสตร์การค้า/.test(sourceText) && !markedMock;
@@ -38,11 +38,16 @@ function datasetSource() {
 }
 
 export default function Overview({ navigate }) {
-  const defaultMaterial = materialCatalog.find((item) => String(item.id) === "04") || materialCatalog[0];
+  const defaultMaterial = materialCatalog[0];
   const [selectedMaterialId, setSelectedMaterialId] = useState(defaultMaterial?.id ?? "");
+  const [materialQuery, setMaterialQuery] = useState("");
   const [visibleMonths, setVisibleMonths] = useState(12);
-  const selected = materialCatalog.find((item) => String(item.id) === String(selectedMaterialId)) || materialCatalog[0];
+  const selected = getMaterialById(selectedMaterialId) || materialCatalog[0];
   const source = useMemo(datasetSource, []);
+  const materialOptions = useMemo(() => {
+    const matches = searchMaterials(materialQuery, 50);
+    return selected && !matches.some((item) => item.id === selected.id) ? [selected, ...matches.slice(0, 49)] : matches;
+  }, [materialQuery, selected]);
 
   const history = useMemo(() => priceData.map((row) => ({ key: row?.key, month: row?.month ?? row?.key, price: getPrice(row, selected?.id) })).filter((row) => row.price !== null), [selected]);
   const chartData = useMemo(() => history.slice(-Math.max(1, Math.round(numeric(visibleMonths) ?? 12))), [history, visibleMonths]);
@@ -52,7 +57,8 @@ export default function Overview({ navigate }) {
 
   const completeness = useMemo(() => {
     const expected = priceData.length * materialCatalog.length;
-    const available = priceData.reduce((sum, row) => sum + materialCatalog.filter((material) => getPrice(row, material.id) !== null).length, 0);
+    const catalogIds = new Set(materialCatalog.map((material) => material.id));
+    const available = priceData.reduce((sum, row) => sum + Object.entries(row?.prices || {}).filter(([id, value]) => catalogIds.has(id) && numeric(value) !== null).length, 0);
     return expected ? (available / expected) * 100 : 0;
   }, []);
 
@@ -81,11 +87,11 @@ export default function Overview({ navigate }) {
       />
 
       <div className={`ov-source ${source.ready ? "ready" : "warning"}`}>
-        <Database size={18} /><div><strong>{source.label}</strong><span>ช่วงข้อมูล {firstPeriod} – {latestPeriod} • พื้นที่กรุงเทพมหานคร</span></div><a href={OFFICIAL_PRICE_URL} target="_blank" rel="noreferrer">ดูแหล่งราคาภาครัฐ</a>
+        <Database size={18} /><div><strong>{source.label}</strong><span>ช่วงข้อมูล {firstPeriod} – {latestPeriod} • กรุงเทพมหานคร (อ้างอิงราคาส่วนกลาง ไม่รวม VAT และค่าขนส่ง)</span></div><a href={OFFICIAL_PRICE_URL} target="_blank" rel="noreferrer">ดูแหล่งราคาภาครัฐ</a>
       </div>
 
       <div className="ov-stats">
-        <OverviewMetric icon={<MapPin size={17} />} label="พื้นที่นำร่อง" value="กรุงเทพฯ" note="ยังไม่รวมจังหวัดอื่น" />
+        <OverviewMetric icon={<MapPin size={17} />} label="พื้นที่ราคา" value="ส่วนกลาง" note="อ้างอิงกรุงเทพมหานคร" />
         <OverviewMetric icon={<PackageSearch size={17} />} label={`ราคาล่าสุด • ${selected?.name || "วัสดุ"}`} value={formatPrice(latestPrice)} note={`${latestPeriod} • ${selected?.unit || "—"}`} change={monthlyChange} />
         <OverviewMetric icon={<Database size={17} />} label="รายการวัสดุ" value={`${materialCatalog.length} รายการ`} note={`${priceData.length} เดือนใน Dataset`} />
         <OverviewMetric icon={<BarChart3 size={17} />} label="ความครบถ้วน" value={`${completeness.toFixed(1)}%`} note="ช่องราคาที่มีค่าตัวเลข" />
@@ -93,7 +99,7 @@ export default function Overview({ navigate }) {
 
       <div className="ov-main-grid">
         <section className="card ov-chart-card">
-          <div className="ov-card-head"><div><h2><TrendingUp size={18} /> แนวโน้มราคา</h2><p>{selected?.name} • {selected?.unit}</p></div><div className="ov-chart-controls"><select value={selected?.id ?? ""} onChange={(event) => setSelectedMaterialId(event.target.value)}>{materialCatalog.map((material) => <option key={material.id} value={material.id}>{material.id} — {material.name}</option>)}</select><label><input inputMode="numeric" type="number" min="1" step="1" value={visibleMonths} onChange={(event) => setVisibleMonths(event.target.value)} /><span>เดือน</span></label></div></div>
+          <div className="ov-card-head"><div><h2><TrendingUp size={18} /> แนวโน้มราคา</h2><p>{selected?.name} • {selected?.unit}</p></div><div className="ov-chart-controls"><input className="ov-material-search" value={materialQuery} onChange={(event) => setMaterialQuery(event.target.value)} placeholder="ค้นหาชื่อ รหัส หรือหมวด" /><select value={selected?.id ?? ""} onChange={(event) => setSelectedMaterialId(event.target.value)}>{materialOptions.map((material) => <option key={material.id} value={material.id}>{material.id} — {material.name}</option>)}</select><label><input inputMode="numeric" type="number" min="1" step="1" value={visibleMonths} onChange={(event) => setVisibleMonths(event.target.value)} /><span>เดือน</span></label></div></div>
           {chartData.length ? <div className="ov-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chartData} margin={{ top: 12, right: 12, left: 2, bottom: 4 }}><defs><linearGradient id="overviewFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2563eb" stopOpacity={0.24} /><stop offset="100%" stopColor="#2563eb" stopOpacity={0} /></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="month" tickLine={false} axisLine={false} /><YAxis width={64} tickLine={false} axisLine={false} domain={["auto", "auto"]} tickFormatter={(value) => `฿${Number(value).toLocaleString("th-TH", { notation: "compact", maximumFractionDigits: 1 })}`} /><Tooltip formatter={(value) => [`${formatPrice(value)} ${selected?.unit || ""}`, "ราคา"]} /><Area type="monotone" dataKey="price" stroke="#2563eb" fill="url(#overviewFill)" strokeWidth={2.5} /></AreaChart></ResponsiveContainer></div> : <div className="ov-empty">ยังไม่มีประวัติราคาสำหรับวัสดุนี้</div>}
         </section>
 
@@ -124,15 +130,15 @@ const OVERVIEW_STYLES = `
   .ov-metric-icon { width:32px; height:32px; display:grid; place-items:center; flex:0 0 auto; border-radius:9px; background:rgba(59,130,246,.1); color:#2563eb; } .ov-metric > div:last-child { min-width:0; } .ov-metric span,.ov-metric small { display:block; font-size:9px; opacity:.5; } .ov-metric strong { display:block; margin:5px 0 3px; font-size:16px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .ov-metric small { min-height:14px; } .ov-metric small svg { vertical-align:middle; }
   .ov-main-grid { display:grid; grid-template-columns:minmax(0,1.55fr) minmax(260px,.45fr); gap:14px; margin-bottom:14px; } .ov-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:13px; }
   .ov-card-head h2 { display:flex; align-items:center; gap:7px; margin:0; font-size:15px; } .ov-card-head p { margin:4px 0 0; font-size:9px; opacity:.5; }
-  .ov-chart-controls { display:flex; gap:7px; } .ov-chart-controls select,.ov-chart-controls label { min-height:38px; border:1px solid rgba(148,163,184,.22); border-radius:8px; background:rgba(148,163,184,.035); color:inherit; }
-  .ov-chart-controls select { max-width:240px; padding:0 9px; } .ov-chart-controls label { display:flex; align-items:center; overflow:hidden; } .ov-chart-controls input { width:54px; padding:0 7px; border:0; outline:0; background:transparent; color:inherit; text-align:right; } .ov-chart-controls label span { padding-right:8px; font-size:9px; opacity:.5; }
+  .ov-chart-controls { display:flex; gap:7px; } .ov-chart-controls select,.ov-chart-controls label,.ov-chart-controls .ov-material-search { min-height:38px; border:1px solid rgba(148,163,184,.22); border-radius:8px; background:rgba(148,163,184,.035); color:inherit; }
+  .ov-chart-controls select { max-width:240px; padding:0 9px; } .ov-chart-controls .ov-material-search { width:190px; padding:0 9px; outline:0; text-align:left; } .ov-chart-controls label { display:flex; align-items:center; overflow:hidden; } .ov-chart-controls label input { width:54px; padding:0 7px; border:0; outline:0; background:transparent; color:inherit; text-align:right; } .ov-chart-controls label span { padding-right:8px; font-size:9px; opacity:.5; }
   .ov-chart { height:300px; } .ov-snapshot { color:#f8fafc; background:linear-gradient(145deg,#17243a,#0f172a); } .ov-snapshot > span { font-size:9px; opacity:.5; } .ov-snapshot > strong { display:block; margin:8px 0 5px; font-size:21px; } .ov-snapshot p { margin:0; font-size:10px; line-height:1.6; opacity:.6; }
   .ov-snapshot dl { display:grid; gap:7px; margin:15px 0; padding:12px 0; border-top:1px solid rgba(255,255,255,.1); border-bottom:1px solid rgba(255,255,255,.1); } .ov-snapshot dl div { display:flex; justify-content:space-between; gap:8px; font-size:9px; } .ov-snapshot dt { opacity:.5; } .ov-snapshot dd { margin:0; font-weight:750; }
   .ov-snapshot button { width:100%; min-height:40px; border:0; border-radius:9px; background:#2563eb; color:#fff; cursor:pointer; font-weight:750; }
   .ov-mover-list { display:grid; gap:7px; } .ov-mover-list article { display:grid; grid-template-columns:minmax(0,1fr) auto 80px; align-items:center; gap:12px; padding:10px 12px; border:1px solid rgba(148,163,184,.13); border-radius:9px; }
-  .ov-mover-list article > div { display:flex; align-items:center; gap:9px; min-width:0; } .ov-mover-list article > div > b { width:29px; height:29px; display:grid; place-items:center; flex:0 0 auto; border-radius:8px; background:rgba(59,130,246,.1); color:#2563eb; font-size:9px; } .ov-mover-list span strong,.ov-mover-list span small { display:block; } .ov-mover-list span strong { font-size:10px; } .ov-mover-list span small { margin-top:2px; font-size:8px; opacity:.45; }
+  .ov-mover-list article > div { display:flex; align-items:center; gap:9px; min-width:0; } .ov-mover-list article > div > b { min-width:112px; height:29px; display:grid; place-items:center; flex:0 0 auto; padding:0 7px; border-radius:8px; background:rgba(59,130,246,.1); color:#2563eb; font-size:8px; } .ov-mover-list span strong,.ov-mover-list span small { display:block; } .ov-mover-list span strong { font-size:10px; } .ov-mover-list span small { margin-top:2px; font-size:8px; opacity:.45; }
   .ov-mover-list article > span:last-child { display:flex; align-items:center; justify-content:flex-end; gap:3px; font-size:10px; font-weight:750; } .ov-mover-list .up { color:#dc2626; } .ov-mover-list .down { color:#059669; } .ov-empty { min-height:130px; display:grid; place-items:center; border:1px dashed rgba(148,163,184,.23); border-radius:10px; font-size:10px; opacity:.5; }
   @media (max-width:920px) { .ov-stats { grid-template-columns:1fr 1fr; } .ov-main-grid { grid-template-columns:1fr; } }
-  @media (max-width:620px) { .ov-source { align-items:flex-start; flex-wrap:wrap; } .ov-source a { width:100%; padding-left:28px; } .ov-stats { grid-template-columns:1fr 1fr; } .ov-metric { padding:11px !important; } .ov-metric strong { font-size:14px; } .ov-card-head { flex-direction:column; } .ov-chart-controls { width:100%; display:grid; grid-template-columns:1fr 95px; } .ov-chart-controls select,.ov-chart-controls input { font-size:16px; } .ov-chart { height:250px; margin-left:-8px; } .ov-mover-list article { grid-template-columns:minmax(0,1fr) auto; } .ov-mover-list article > span:last-child { grid-column:2; } .ov-mover-list article > strong { grid-column:2; grid-row:1; } }
+  @media (max-width:620px) { .ov-source { align-items:flex-start; flex-wrap:wrap; } .ov-source a { width:100%; padding-left:28px; } .ov-stats { grid-template-columns:1fr 1fr; } .ov-metric { padding:11px !important; } .ov-metric strong { font-size:14px; } .ov-card-head { flex-direction:column; } .ov-chart-controls { width:100%; display:grid; grid-template-columns:1fr 95px; } .ov-chart-controls .ov-material-search { width:auto; grid-column:1/-1; } .ov-chart-controls select,.ov-chart-controls input { font-size:16px; } .ov-chart { height:250px; margin-left:-8px; } .ov-mover-list article { grid-template-columns:minmax(0,1fr) auto; } .ov-mover-list article > span:last-child { grid-column:2; } .ov-mover-list article > strong { grid-column:2; grid-row:1; } }
   @media (max-width:380px) { .ov-stats { grid-template-columns:1fr; } }
 `;

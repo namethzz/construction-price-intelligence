@@ -26,7 +26,7 @@ import {
   Upload,
 } from "lucide-react";
 
-import { materials } from "../data.js";
+import { materialUnits, materials } from "../data.js";
 import { PageHeader } from "../components/Shared.jsx";
 
 const SCHEMA_VERSION = 2;
@@ -61,15 +61,16 @@ const SECTION_DEFINITIONS = [
   { id: "sanitary_drainage", code: "Q", discipline: "system", title: "งานสุขาภิบาลและระบายน้ำ" },
 ];
 
-const UNIT_OPTIONS = [
+const UNIT_OPTIONS = [...new Set([
   "ลบ.ม.", "ตร.ม.", "ม.", "กก.", "ตัน", "ลบ.ฟ.", "แผ่น", "เส้น", "ท่อน",
   "ต้น", "จุด", "ชุด", "อัน", "ใบ", "ถัง", "บ่อ", "เครื่อง", "งาน", "Lot",
-];
+  ...materialUnits,
+])];
 
 const EMPTY_PROJECT = {
   name: "บ้านพักอาศัย",
   owner: "",
-  location: "กรุงเทพมหานคร (ราคาส่วนกลาง)",
+  location: "กรุงเทพมหานคร (อ้างอิงราคาส่วนกลาง)",
   drawingNo: "",
   estimator: "",
   estimateDate: new Date().toISOString().slice(0, 10),
@@ -420,6 +421,7 @@ function normalizeUnit(unit = "") {
 
 function canonicalUnit(unit = "") {
   const value = normalizeUnit(unit).replace(/[()]/g, "");
+  if (/^\d+/.test(value)) return value.replace(/\./g, "");
   if (value.includes("ลูกบาศก์เมตร") || value.includes("ลบ.ม") || value.includes("m3") || value.includes("ม³")) return "m3";
   if (value.includes("ตารางเมตร") || value.includes("ตร.ม") || value.includes("m2") || value.includes("ม²")) return "m2";
   if (value.includes("กิโลกรัม") || value.includes("กก") || value.includes("kg")) return "kg";
@@ -431,12 +433,16 @@ function canonicalUnit(unit = "") {
   if (value.includes("เส้น")) return "bar";
   if (value.includes("ท่อน")) return "piece";
   if (value.includes("เมตร") || value === "ม." || value === "ม" || value === "m") return "m";
-  if (value.includes("ชุด") || value === "set") return "set";
-  if (value.includes("จุด")) return "point";
-  if (value.includes("ต้น") || value.includes("อัน") || value.includes("ใบ") || value.includes("เครื่อง")) return "each";
-  if (value.includes("ถัง")) return "tank";
-  if (value.includes("บ่อ")) return "pit";
-  if (value.includes("lot") || value.includes("งาน")) return "lot";
+  if (value.includes("ชุด") || value === "set") return "ชุด";
+  if (value.includes("จุด")) return "จุด";
+  if (value.includes("ต้น")) return "ต้น";
+  if (value.includes("อัน")) return "อัน";
+  if (value.includes("ใบ")) return "ใบ";
+  if (value.includes("เครื่อง")) return "เครื่อง";
+  if (value.includes("ถัง")) return "ถัง";
+  if (value.includes("บ่อ")) return "บ่อ";
+  if (value.includes("lot")) return "lot";
+  if (value.includes("งาน")) return "งาน";
   return value.replace(/\./g, "");
 }
 
@@ -476,34 +482,43 @@ function materialMatchScore(row, material) {
   return [...new Set(terms)].reduce((score, term) => score + (haystack.includes(term) ? Math.min(term.length, 12) : 0), 0);
 }
 
-function materialOptionsFor(row) {
-  if (!Array.isArray(materials)) return [];
-  const compatible = materials
-    .filter((material) => convertedOfficialPrice(material, row.unit) !== null)
+const MATERIAL_BY_ID = new Map(materials.map((material) => [materialId(material), material]));
+const MATERIALS_BY_UNIT = materials.reduce((index, material) => {
+  const unit = canonicalUnit(materialUnit(material));
+  if (!index.has(unit)) index.set(unit, []);
+  index.get(unit).push(material);
+  return index;
+}, new Map());
+
+function compatibleMaterialsForUnit(unit) {
+  const target = canonicalUnit(unit);
+  const keys = target === "kg" ? ["kg", "ton"] : target === "ton" ? ["ton", "kg"] : [target];
+  return keys.flatMap((key) => MATERIALS_BY_UNIT.get(key) || []);
+}
+
+function materialOptionsFor(row, query = "") {
+  const searchTerms = String(query).trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const compatible = compatibleMaterialsForUnit(row.unit)
+    .filter((material) => !searchTerms.length || searchTerms.every((term) => [materialId(material), materialName(material), material?.category].some((value) => String(value ?? "").toLowerCase().includes(term))))
     .map((material) => ({ material, score: materialMatchScore(row, material) }))
     .sort((a, b) => b.score - a.score || materialName(a.material).localeCompare(materialName(b.material), "th"))
     .map((entry) => entry.material);
-  const selected = row.materialId
-    ? compatible.find((material) => materialId(material) === String(row.materialId))
-    : null;
-  const shortlist = compatible.slice(0, 100);
-  return selected && !shortlist.includes(selected) ? [selected, ...shortlist.slice(0, 99)] : shortlist;
+  const selectedCandidate = row.materialId ? MATERIAL_BY_ID.get(String(row.materialId)) : null;
+  const selected = selectedCandidate && convertedOfficialPrice(selectedCandidate, row.unit) !== null ? selectedCandidate : null;
+  const shortlist = compatible.slice(0, 50);
+  return selected && !shortlist.includes(selected) ? [selected, ...shortlist.slice(0, 49)] : shortlist;
 }
 
 function catalogForRow(row) {
-  const options = materialOptionsFor(row);
-  const selected = row.materialId && Array.isArray(materials)
-    ? materials.find((material) => materialId(material) === String(row.materialId) && convertedOfficialPrice(material, row.unit) !== null)
-    : null;
-  const automatic = !selected && options.length && materialMatchScore(row, options[0]) >= 5 ? options[0] : null;
-  const material = selected || automatic;
+  const material = row.materialId ? MATERIAL_BY_ID.get(String(row.materialId)) : null;
+  if (material && convertedOfficialPrice(material, row.unit) === null) return null;
   if (!material) return null;
   return {
     material,
     price: convertedOfficialPrice(material, row.unit),
     originalPrice: materialPrice(material),
     originalUnit: materialUnit(material),
-    selected: Boolean(selected),
+    selected: true,
   };
 }
 
@@ -1320,7 +1335,12 @@ function RowStatus({ row, priceMode }) {
 }
 
 function RowDetails({ row, priceMode, onUpdate, onUpdateNumber, onDuplicate, onDelete, onMove }) {
-  const options = row.costTypes.material ? materialOptionsFor(row) : [];
+  const [materialQuery, setMaterialQuery] = useState("");
+  const keywordKey = (row.keywords || []).join("|");
+  const options = useMemo(
+    () => row.costTypes.material ? materialOptionsFor(row, materialQuery) : [],
+    [row.costTypes.material, row.unit, row.materialId, row.name, row.spec, keywordKey, materialQuery]
+  );
   const effectiveMaterial = row.catalog?.material;
   const unitOptions = UNIT_OPTIONS.includes(row.unit) ? UNIT_OPTIONS : [...UNIT_OPTIONS, row.unit];
   const toggleCost = (key) => onUpdate(row.id, {
@@ -1361,21 +1381,23 @@ function RowDetails({ row, priceMode, onUpdate, onUpdateNumber, onDuplicate, onD
       {row.costTypes.material && (
         <div className="boq-material-panel">
           <div className="boq-material-panel-title">
-            <span><b>ราคาวัสดุ</b><small>เว้นราคากรอกเองว่างไว้เพื่อใช้ราคากลางจากรายการที่จับคู่</small></span>
+            <span><b>ราคาวัสดุ</b><small>ค้นหาและเลือกวัสดุตามรหัสจริง ระบบจะไม่เลือกสเปกให้อัตโนมัติ</small></span>
             <span className="boq-source-pill">{row.currentSource}</span>
           </div>
           <div className="boq-detail-grid rates">
             <label className="boq-field wide">
-              <span>จับคู่รายการราคากลางภาครัฐ</span>
+              <span>เลือกรายการราคากลางภาครัฐ</span>
+              <div className="boq-material-search"><Search size={15} /><input value={materialQuery} onChange={(event) => setMaterialQuery(event.target.value)} placeholder="ค้นหาชื่อ รหัส หรือหมวดวัสดุ" /></div>
               <select value={row.materialId || ""} onChange={(event) => onUpdate(row.id, { materialId: event.target.value, materialRate: "", futureMaterialRate: "" })}>
-                <option value="">จับคู่อัตโนมัติจากชื่อและสเปก</option>
+                <option value="">ยังไม่เลือกวัสดุ</option>
                 {options.map((material) => (
                   <option key={materialId(material)} value={materialId(material)}>
-                    {materialName(material)} • ฿{formatPrice(convertedOfficialPrice(material, row.unit))}/{row.unit}
+                    {materialId(material)} — {materialName(material)} • ฿{formatPrice(convertedOfficialPrice(material, row.unit))}/{row.unit}
                   </option>
                 ))}
               </select>
               {!options.length && <small className="boq-inline-warning"><AlertTriangle size={13} /> ยังไม่มีข้อมูลราคากลางที่แปลงเป็นหน่วย {row.unit} ได้</small>}
+              {!row.materialId && number(row.rawMaterialRate) <= 0 && <small className="boq-inline-warning"><AlertTriangle size={13} /> ต้องเลือกวัสดุจริง หรือกรอกราคาวัสดุเองก่อนคำนวณ</small>}
             </label>
             <TextField
               label="ราคาวัสดุปัจจุบันที่กำหนดเอง"
@@ -1852,6 +1874,9 @@ const BOQ_STYLES = `
   .boq-material-panel-title > span:first-child { display: grid; gap: 2px; }
   .boq-material-panel-title b { font-size: 11px; }
   .boq-material-panel-title small { color: var(--boq-muted); font-size: 9px; line-height: 1.4; }
+  .boq-material-search { position: relative; display: flex; align-items: center; }
+  .boq-material-search svg { position: absolute; left: 11px; z-index: 1; color: var(--boq-muted); pointer-events: none; }
+  .boq-material-search input { padding-left: 34px; }
   .boq-source-pill { flex: 0 0 auto; padding: 4px 8px; border-radius: 999px; color: var(--boq-green-dark); background: var(--boq-green-soft); font-size: 9px; font-weight: 800; }
   .boq-match-info { display: flex; align-items: flex-start; gap: 6px; margin-top: 9px; color: var(--boq-muted); font-size: 9px; line-height: 1.45; }
   .boq-match-info svg { flex: 0 0 auto; color: var(--boq-green); }

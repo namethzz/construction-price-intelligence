@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { ArrowDownRight, ArrowUpRight, Database, Download, MapPin, PackageSearch, RotateCcw, Search } from "lucide-react";
 import { materials, priceData } from "../data.js";
 import { PageHeader } from "../components/Shared.jsx";
 
 const OFFICIAL_PRICE_URL = "https://index.tpso.go.th/construction-material-prices/prices-building-materials";
+const PAGE_SIZE = 50;
 
 function numeric(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -37,6 +38,7 @@ export default function Prices() {
   const [query, setQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [sortBy, setSortBy] = useState("name");
+  const [page, setPage] = useState(1);
   const latestRow = priceData.at(-1);
   const previousRow = priceData.at(-2);
   const latestPeriod = latestRow?.month ?? "ไม่ระบุเดือน";
@@ -69,9 +71,17 @@ export default function Prices() {
     up: filteredMaterials.filter((item) => item.changePercent !== null && item.changePercent > 0).length,
     down: filteredMaterials.filter((item) => item.changePercent !== null && item.changePercent < 0).length,
   }), [filteredMaterials]);
+  const pageCount = Math.max(1, Math.ceil(filteredMaterials.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const paginatedMaterials = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filteredMaterials.slice(start, start + PAGE_SIZE);
+  }, [filteredMaterials, currentPage]);
+
+  useEffect(() => setPage(1), [query, selectedCategory, sortBy]);
 
   const exportCSV = () => {
-    const rows = [["รหัส", "วัสดุ", "หมวดหมู่", "พื้นที่", "งวดข้อมูล", "ราคา", "หน่วย", "เปลี่ยนแปลง (%)", "แหล่งข้อมูล"], ...filteredMaterials.map((item) => [item.id, item.name, item.category, "กรุงเทพมหานคร", latestPeriod, item.currentPrice ?? "", item.unit, item.changePercent ?? "", item.sourceLabel])];
+    const rows = [["รหัส", "วัสดุ", "หมวดหมู่", "พื้นที่", "งวดข้อมูล", "ราคา", "หน่วย", "เปลี่ยนแปลง (%)", "แหล่งข้อมูล"], ...filteredMaterials.map((item) => [item.id, item.name, item.category, "กรุงเทพมหานคร (อ้างอิงราคาส่วนกลาง)", latestPeriod, item.currentPrice ?? "", item.unit, item.changePercent ?? "", item.sourceLabel])];
     const csv = rows.map((row) => row.map(escapeCSV).join(",")).join("\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -91,13 +101,13 @@ export default function Prices() {
       <style>{PRICE_STYLES}</style>
       <PageHeader eyebrow="THAI เท • PRICE CATALOG" title="ฐานราคาวัสดุก่อสร้าง" description="ค้นหาและเปรียบเทียบราคาล่าสุดที่มีใน Dataset พร้อมระบุงวดและแหล่งข้อมูล" action={<button className="outline-btn" onClick={exportCSV} disabled={!filteredMaterials.length}><Download size={15} /> ดาวน์โหลด CSV</button>} />
 
-      <div className="pr-source"><Database size={18} /><div><strong>งวดข้อมูลล่าสุด: {latestPeriod}</strong><span>ระบบใช้ราคาจาก priceData ก่อน และใช้ราคาในรายการวัสดุเมื่อไม่มีข้อมูลรายเดือน</span></div><a href={OFFICIAL_PRICE_URL} target="_blank" rel="noreferrer">ตรวจสอบราคาภาครัฐ</a></div>
+      <div className="pr-source"><Database size={18} /><div><strong>งวดข้อมูลล่าสุด: {latestPeriod}</strong><span>ราคาส่วนกลางแบบเงินสด ไม่รวมภาษีมูลค่าเพิ่มและค่าขนส่ง</span></div><a href={OFFICIAL_PRICE_URL} target="_blank" rel="noreferrer">ตรวจสอบราคาภาครัฐ</a></div>
 
       <div className="pr-stats">
         <PriceMetric label="วัสดุที่แสดง" value={`${summary.total} รายการ`} note={`จากทั้งหมด ${materials.length} รายการ`} />
         <PriceMetric label="มีราคาล่าสุด" value={`${summary.withPrice} รายการ`} note={`${summary.total - summary.withPrice} รายการยังไม่มีราคา`} />
         <PriceMetric label="ราคาเพิ่มขึ้น" value={`${summary.up} รายการ`} note={`ลดลง ${summary.down} รายการ`} />
-        <PriceMetric label="พื้นที่ราคา" value="กรุงเทพฯ" note="พื้นที่นำร่อง" icon={<MapPin size={15} />} />
+        <PriceMetric label="พื้นที่ราคา" value="ส่วนกลาง" note="อ้างอิงกรุงเทพมหานคร" icon={<MapPin size={15} />} />
       </div>
 
       <section className="card pr-filters">
@@ -110,9 +120,10 @@ export default function Prices() {
       <section className="card pr-results">
         <div className="pr-head"><div><h2><PackageSearch size={18} /> รายการราคา</h2><p>พบ {filteredMaterials.length} รายการ • {latestPeriod}</p></div><span>ราคา/หน่วยตาม Dataset</span></div>
 
-        <div className="pr-mobile-list">{filteredMaterials.map((item) => <article key={`mobile-${item.id}`}><div className="pr-item-head"><b>{item.id}</b><div><strong>{item.name}</strong><span>{item.category}</span></div><Change value={item.changePercent} /></div><div className="pr-item-price"><div><span>ราคาล่าสุด</span><strong>{item.currentPrice === null ? "—" : `฿${formatPrice(item.currentPrice)}`}</strong><small>{item.unit}</small></div><div><span>เดือนก่อน</span><strong>{item.previousPrice === null ? "—" : `฿${formatPrice(item.previousPrice)}`}</strong></div></div><div className="pr-item-source"><span>แหล่งข้อมูล</span><strong>{item.sourceLabel}</strong></div></article>)}</div>
+        <div className="pr-mobile-list">{paginatedMaterials.map((item) => <article key={`mobile-${item.id}`}><div className="pr-item-head"><b>{item.id}</b><div><strong>{item.name}</strong><span>{item.category}</span></div><Change value={item.changePercent} /></div><div className="pr-item-price"><div><span>ราคาล่าสุด</span><strong>{item.currentPrice === null ? "—" : `฿${formatPrice(item.currentPrice)}`}</strong><small>{item.unit}</small></div><div><span>เดือนก่อน</span><strong>{item.previousPrice === null ? "—" : `฿${formatPrice(item.previousPrice)}`}</strong></div></div><div className="pr-item-source"><span>แหล่งข้อมูล</span><strong>{item.sourceLabel}</strong></div></article>)}</div>
 
-        <div className="pr-table-wrap"><table><thead><tr><th>วัสดุ</th><th>หมวด</th><th>ราคา {latestPeriod}</th><th>เดือนก่อน</th><th>เปลี่ยนแปลง</th><th>แหล่งข้อมูล</th></tr></thead><tbody>{filteredMaterials.map((item) => <tr key={item.id}><td><div className="pr-name"><b>{item.id}</b><span><strong>{item.name}</strong><small>{item.unit}</small></span></div></td><td>{item.category}</td><td className="number">{item.currentPrice === null ? "—" : `฿${formatPrice(item.currentPrice)}`}</td><td className="number">{item.previousPrice === null ? "—" : `฿${formatPrice(item.previousPrice)}`}</td><td><Change value={item.changePercent} /></td><td><small>{item.sourceLabel}</small></td></tr>)}</tbody></table></div>
+        <div className="pr-table-wrap"><table><thead><tr><th>วัสดุ</th><th>หมวด</th><th>ราคา {latestPeriod}</th><th>เดือนก่อน</th><th>เปลี่ยนแปลง</th><th>แหล่งข้อมูล</th></tr></thead><tbody>{paginatedMaterials.map((item) => <tr key={item.id}><td><div className="pr-name"><b>{item.id}</b><span><strong>{item.name}</strong><small>{item.unit}</small></span></div></td><td>{item.category}</td><td className="number">{item.currentPrice === null ? "—" : `฿${formatPrice(item.currentPrice)}`}</td><td className="number">{item.previousPrice === null ? "—" : `฿${formatPrice(item.previousPrice)}`}</td><td><Change value={item.changePercent} /></td><td><small>{item.sourceLabel}</small></td></tr>)}</tbody></table></div>
+        {filteredMaterials.length > PAGE_SIZE && <div className="pr-pagination"><button type="button" disabled={currentPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>ก่อนหน้า</button><span>หน้า {currentPage} / {pageCount} • แสดง {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, filteredMaterials.length)}</span><button type="button" disabled={currentPage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>ถัดไป</button></div>}
         {!filteredMaterials.length && <div className="pr-empty">ไม่พบวัสดุที่ตรงกับตัวกรอง</div>}
       </section>
     </>
@@ -135,10 +146,11 @@ const PRICE_STYLES = `
   .pr-filters label > div { display:flex; align-items:center; gap:8px; padding:0 10px; } .pr-filters input { width:100%; min-width:0; border:0; outline:0; background:transparent; color:inherit; font:inherit; } .pr-filters select { width:100%; padding:0 9px; } .pr-filters button { min-height:44px; display:flex; align-items:center; gap:6px; padding:0 12px; border:1px solid rgba(148,163,184,.23); border-radius:9px; background:transparent; color:inherit; cursor:pointer; font-weight:700; white-space:nowrap; }
   .pr-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:11px; } .pr-head h2 { display:flex; align-items:center; gap:7px; margin:0; font-size:15px; } .pr-head p,.pr-head > span { margin:4px 0 0; font-size:9px; opacity:.5; }
   .pr-table-wrap { overflow-x:auto; } .pr-table-wrap table { width:100%; min-width:850px; border-collapse:collapse; } .pr-table-wrap th { padding:10px 11px; text-align:left; font-size:9px; opacity:.5; background:rgba(148,163,184,.04); } .pr-table-wrap td { padding:11px; border-top:1px solid rgba(148,163,184,.12); font-size:10px; } .pr-table-wrap td.number { font-weight:750; white-space:nowrap; }
-  .pr-name { display:flex; align-items:center; gap:9px; min-width:220px; } .pr-name > b { width:30px; height:30px; display:grid; place-items:center; flex:0 0 auto; border-radius:8px; background:rgba(59,130,246,.1); color:#2563eb; font-size:9px; } .pr-name span strong,.pr-name span small { display:block; } .pr-name span small { margin-top:2px; font-size:8px; opacity:.45; }
+  .pr-name { display:flex; align-items:center; gap:9px; min-width:330px; } .pr-name > b { min-width:112px; height:30px; display:grid; place-items:center; flex:0 0 auto; padding:0 7px; border-radius:8px; background:rgba(59,130,246,.1); color:#2563eb; font-size:9px; } .pr-name span strong,.pr-name span small { display:block; } .pr-name span small { margin-top:2px; font-size:8px; opacity:.45; }
   .pr-change { display:inline-flex; align-items:center; gap:3px; font-size:10px; font-weight:750; white-space:nowrap; } .pr-change.up { color:#dc2626; } .pr-change.down { color:#059669; } .pr-change.neutral { opacity:.45; }
   .pr-mobile-list { display:none; } .pr-empty { min-height:140px; display:grid; place-items:center; font-size:10px; opacity:.5; }
+  .pr-pagination { display:flex; align-items:center; justify-content:center; gap:10px; margin-top:14px; padding-top:12px; border-top:1px solid rgba(148,163,184,.12); } .pr-pagination span { font-size:9px; opacity:.58; } .pr-pagination button { min-height:34px; padding:0 12px; border:1px solid rgba(148,163,184,.22); border-radius:8px; background:transparent; color:inherit; cursor:pointer; font-weight:700; } .pr-pagination button:disabled { cursor:not-allowed; opacity:.35; }
   @media (max-width:940px) { .pr-stats { grid-template-columns:1fr 1fr; } .pr-filters { grid-template-columns:1fr 1fr; } .pr-search { grid-column:1/-1; } }
-  @media (max-width:620px) { .pr-source { align-items:flex-start; flex-wrap:wrap; } .pr-source a { width:100%; padding-left:28px; white-space:normal; } .pr-stats { grid-template-columns:1fr 1fr; } .pr-metric { padding:11px !important; } .pr-metric strong { font-size:14px; } .pr-filters { grid-template-columns:1fr; padding:14px !important; } .pr-search { grid-column:auto; } .pr-filters input,.pr-filters select { font-size:16px; } .pr-filters button { justify-content:center; } .pr-head { flex-direction:column; } .pr-table-wrap { display:none; } .pr-mobile-list { display:grid; gap:9px; } .pr-mobile-list article { padding:12px; border:1px solid rgba(148,163,184,.15); border-radius:10px; } .pr-item-head { display:flex; align-items:flex-start; gap:9px; } .pr-item-head > b { width:31px; height:31px; display:grid; place-items:center; flex:0 0 auto; border-radius:8px; background:rgba(59,130,246,.1); color:#2563eb; font-size:9px; } .pr-item-head > div { min-width:0; flex:1; } .pr-item-head > div strong,.pr-item-head > div span { display:block; } .pr-item-head > div strong { font-size:11px; } .pr-item-head > div span { margin-top:2px; font-size:8px; opacity:.5; } .pr-item-price { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; } .pr-item-price > div { padding:9px; border-radius:8px; background:rgba(148,163,184,.055); } .pr-item-price span,.pr-item-price small { display:block; font-size:8px; opacity:.5; } .pr-item-price strong { display:block; margin:4px 0 2px; font-size:13px; } .pr-item-source { margin-top:9px; padding-top:8px; border-top:1px solid rgba(148,163,184,.12); } .pr-item-source span,.pr-item-source strong { display:block; } .pr-item-source span { font-size:7px; opacity:.45; } .pr-item-source strong { margin-top:2px; font-size:8px; } }
+  @media (max-width:620px) { .pr-source { align-items:flex-start; flex-wrap:wrap; } .pr-source a { width:100%; padding-left:28px; white-space:normal; } .pr-stats { grid-template-columns:1fr 1fr; } .pr-metric { padding:11px !important; } .pr-metric strong { font-size:14px; } .pr-filters { grid-template-columns:1fr; padding:14px !important; } .pr-search { grid-column:auto; } .pr-filters input,.pr-filters select { font-size:16px; } .pr-filters button { justify-content:center; } .pr-head { flex-direction:column; } .pr-table-wrap { display:none; } .pr-mobile-list { display:grid; gap:9px; } .pr-mobile-list article { padding:12px; border:1px solid rgba(148,163,184,.15); border-radius:10px; } .pr-item-head { display:flex; align-items:flex-start; gap:9px; } .pr-item-head > b { min-width:108px; min-height:31px; display:grid; place-items:center; flex:0 0 auto; padding:0 6px; border-radius:8px; background:rgba(59,130,246,.1); color:#2563eb; font-size:8px; } .pr-item-head > div { min-width:0; flex:1; } .pr-item-head > div strong,.pr-item-head > div span { display:block; } .pr-item-head > div strong { font-size:11px; } .pr-item-head > div span { margin-top:2px; font-size:8px; opacity:.5; } .pr-item-price { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; } .pr-item-price > div { padding:9px; border-radius:8px; background:rgba(148,163,184,.055); } .pr-item-price span,.pr-item-price small { display:block; font-size:8px; opacity:.5; } .pr-item-price strong { display:block; margin:4px 0 2px; font-size:13px; } .pr-item-source { margin-top:9px; padding-top:8px; border-top:1px solid rgba(148,163,184,.12); } .pr-item-source span,.pr-item-source strong { display:block; } .pr-item-source span { font-size:7px; opacity:.45; } .pr-item-source strong { margin-top:2px; font-size:8px; } }
   @media (max-width:370px) { .pr-stats { grid-template-columns:1fr; } }
 `;

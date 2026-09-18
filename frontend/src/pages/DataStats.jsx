@@ -21,10 +21,6 @@ function numeric(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function getPrice(row, materialId) {
-  return numeric(row?.prices?.[materialId]);
-}
-
 function factorValue(row, keys) {
   const sources = [row?.factors, row?.externalFactors, row?.external_factors, row];
   for (const source of sources) {
@@ -38,7 +34,7 @@ function factorValue(row, keys) {
 }
 
 function sourceStatus() {
-  const records = [...priceData, ...materialCatalog];
+  const records = [...priceData, materialCatalog[0]].filter(Boolean);
   const sourceText = records.map((item) => [item?.source, item?.sourceName, item?.source_url, item?.sourceUrl].filter(Boolean).join(" ")).join(" ").toLowerCase();
   const mock = records.some((item) => item?.isMock === true || item?.status === "mock" || item?.dataStatus === "mock");
   const official = /tpso|สนค|สำนักงานนโยบายและยุทธศาสตร์การค้า/.test(sourceText) && !mock;
@@ -47,7 +43,8 @@ function sourceStatus() {
 
 function buildQuality() {
   const expected = materialCatalog.length * priceData.length;
-  const available = priceData.reduce((sum, row) => sum + materialCatalog.filter((material) => getPrice(row, material.id) !== null).length, 0);
+  const catalogIds = new Set(materialCatalog.map((material) => material.id));
+  const available = priceData.reduce((sum, row) => sum + Object.entries(row?.prices || {}).filter(([id, value]) => catalogIds.has(id) && numeric(value) !== null).length, 0);
   const seen = new Set();
   let duplicates = 0;
   priceData.forEach((row, index) => {
@@ -60,6 +57,7 @@ function buildQuality() {
 
 function buildCategoryCoverage() {
   const groups = new Map();
+  const availableIds = priceData.map((row) => new Set(Object.entries(row?.prices || {}).filter(([, value]) => numeric(value) !== null).map(([id]) => id)));
   materialCatalog.forEach((material) => {
     const name = material?.category || "ไม่ระบุหมวด";
     if (!groups.has(name)) groups.set(name, []);
@@ -67,7 +65,7 @@ function buildCategoryCoverage() {
   });
   return [...groups.entries()].map(([name, items]) => {
     const expected = items.length * priceData.length;
-    const available = priceData.reduce((sum, row) => sum + items.filter((item) => getPrice(row, item.id) !== null).length, 0);
+    const available = availableIds.reduce((sum, ids) => sum + items.filter((item) => ids.has(item.id)).length, 0);
     return { name, records: available, coverage: expected ? Number(((available / expected) * 100).toFixed(1)) : 0 };
   }).sort((a, b) => a.coverage - b.coverage);
 }
@@ -92,7 +90,7 @@ export default function DataStats() {
       <style>{DATA_STYLES}</style>
       <PageHeader eyebrow="THAI เท • DATA QUALITY" title="คุณภาพและความพร้อมของข้อมูล" description="ตรวจความครบถ้วน แหล่งที่มา ระยะเวลาย้อนหลัง และปัจจัยก่อนนำไปวิเคราะห์หรือฝึก ML" />
 
-      <div className="ds-notice"><Info size={18} /><div><strong>เป้าหมายข้อมูลของโปรเจกต์: รายเดือนย้อนหลัง 10 ปี ({TARGET_MONTHS} เดือน)</strong><span>ความพร้อมสำหรับ ML ไม่ได้ดูแค่จำนวนเดือน แต่รวมถึงค่าที่หาย เดือนซ้ำ แหล่งข้อมูล และปัจจัยเศรษฐกิจด้วย</span></div></div>
+      <div className="ds-notice"><Info size={18} /><div><strong>ไฟล์ปัจจุบันมีราคาจริง 1 งวด ส่วนเป้าหมายของ ML คือรายเดือนย้อนหลัง 10 ปี ({TARGET_MONTHS} เดือน)</strong><span>ระบบไม่สร้างข้อมูลย้อนหลังจำลอง ความพร้อมสำหรับ ML จึงพิจารณาทั้งจำนวนเดือน ค่าที่หาย เดือนซ้ำ แหล่งข้อมูล และปัจจัยเศรษฐกิจ</span></div></div>
 
       <div className="ds-stats">
         <DataMetric icon={<Database size={17} />} label="งวดข้อมูลไม่ซ้ำ" value={`${quality.uniqueMonths} เดือน`} note={`${firstPeriod} – ${lastPeriod}`} />
@@ -132,7 +130,7 @@ export default function DataStats() {
         <div className="ds-factor-grid">{factorCoverage.map((factor) => <article key={factor.id} className={factor.available ? "available" : "missing"}><div><strong>{factor.label}</strong><span>{factor.available}/{priceData.length} เดือน</span></div><b>{factor.coverage.toFixed(0)}%</b></article>)}</div>
       </section>
 
-      <section className={`ds-source-card ${source.ready ? "ready" : "warning"}`}><Link2 size={19} /><div><strong>{source.label}</strong><span>ควรเก็บ source, sourceUrl, retrievedAt และพื้นที่ราคาของทุกงวด เพื่อให้ตรวจสอบย้อนกลับได้</span></div><a href={OFFICIAL_PRICE_URL} target="_blank" rel="noreferrer">เว็บไซต์ราคาวัสดุก่อสร้างภาครัฐ</a></section>
+      <section className={`ds-source-card ${source.ready ? "ready" : "warning"}`}><Link2 size={19} /><div><strong>{source.label}</strong><span>ราคาส่วนกลางแบบเงินสด ไม่รวม VAT และค่าขนส่ง พร้อมเก็บ source, sourceUrl, retrievedAt และพื้นที่ราคาไว้ตรวจสอบย้อนกลับ</span></div><a href={OFFICIAL_PRICE_URL} target="_blank" rel="noreferrer">เว็บไซต์ราคาวัสดุก่อสร้างภาครัฐ</a></section>
     </>
   );
 }
