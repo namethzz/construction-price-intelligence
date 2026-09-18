@@ -1,1147 +1,180 @@
-import React, {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React, { useMemo, useState } from "react";
+import { ArrowDownRight, ArrowUpRight, BarChart3, Database, Info, MapPin, PackageSearch, TrendingUp } from "lucide-react";
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { materials, priceData } from "../data.js";
+import { PageHeader } from "../components/Shared.jsx";
 
-import {
-  ArrowDownRight,
-  ArrowUpRight,
-  Check,
-  ChevronDown,
-  Info,
-  MapPin,
-  PackageSearch,
-  Search,
-  Sparkles,
-  TrendingUp,
-} from "lucide-react";
+const OFFICIAL_PRICE_URL = "https://index.tpso.go.th/construction-material-prices/prices-building-materials";
+const FACTORS = [
+  { id: "oil", label: "ราคาน้ำมัน/พลังงาน", keys: ["oil", "oilPrice", "oil_price", "diesel", "energyPrice", "energy_price"] },
+  { id: "cpi", label: "เงินเฟ้อ (CPI)", keys: ["cpi", "inflation", "inflationRate", "inflation_rate"] },
+  { id: "fx", label: "อัตราแลกเปลี่ยน", keys: ["exchangeRate", "exchange_rate", "thbUsd", "thb_usd", "fx"] },
+  { id: "ppi", label: "ดัชนีราคาผู้ผลิต", keys: ["ppi", "producerPriceIndex", "producer_price_index"] },
+  { id: "interest", label: "อัตราดอกเบี้ย", keys: ["interestRate", "interest_rate", "policyRate", "policy_rate"] },
+  { id: "construction", label: "ดัชนีวัสดุก่อสร้าง", keys: ["constructionMaterialIndex", "construction_material_index", "cmi", "materialIndex"] },
+];
 
-import {
-  AreaChart,
-  Area,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-
-import {
-  materials,
-  priceData,
-} from "../data.js";
-
-import {
-  Driver,
-  PageHeader,
-} from "../components/Shared.jsx";
+function numeric(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 function getPrice(row, materialId) {
-  const value = row?.prices?.[materialId];
-  return Number.isFinite(Number(value))
-    ? Number(value)
-    : null;
+  return numeric(row?.prices?.[materialId]);
 }
 
 function formatPrice(value) {
-  if (!Number.isFinite(Number(value))) {
-    return "-";
-  }
-
-  return Number(value).toLocaleString("th-TH", {
-    minimumFractionDigits:
-      Number(value) < 100 ? 1 : 0,
-    maximumFractionDigits: 2,
-  });
+  const parsed = numeric(value);
+  if (parsed === null) return "—";
+  return parsed.toLocaleString("th-TH", { minimumFractionDigits: parsed < 100 ? 1 : 0, maximumFractionDigits: 2 });
 }
 
 function getChange(current, previous) {
-  if (
-    !Number.isFinite(Number(current)) ||
-    !Number.isFinite(Number(previous)) ||
-    Number(previous) === 0
-  ) {
-    return null;
+  const latest = numeric(current);
+  const base = numeric(previous);
+  if (latest === null || base === null || base === 0) return null;
+  return ((latest - base) / base) * 100;
+}
+
+function factorValue(row, keys) {
+  const sources = [row?.factors, row?.externalFactors, row?.external_factors, row];
+  for (const source of sources) {
+    if (!source || typeof source !== "object") continue;
+    for (const key of keys) {
+      const value = numeric(source[key]);
+      if (value !== null) return value;
+    }
   }
-
-  return (
-    ((Number(current) - Number(previous)) /
-      Number(previous)) *
-    100
-  );
+  return null;
 }
 
-function getDriverValues(materialId) {
-  const seed = Number(materialId || 1);
-
-  return {
-    rawMaterial: 60 + ((seed * 7) % 31),
-    energy: 48 + ((seed * 5) % 31),
-    exchange: 28 + ((seed * 9) % 31),
-    demand: 35 + ((seed * 11) % 31),
-    season: 15 + ((seed * 3) % 26),
-  };
+function pearson(pairs) {
+  if (pairs.length < 6) return null;
+  const meanX = pairs.reduce((sum, pair) => sum + pair.x, 0) / pairs.length;
+  const meanY = pairs.reduce((sum, pair) => sum + pair.y, 0) / pairs.length;
+  let numerator = 0;
+  let denominatorX = 0;
+  let denominatorY = 0;
+  pairs.forEach(({ x, y }) => {
+    const dx = x - meanX;
+    const dy = y - meanY;
+    numerator += dx * dy;
+    denominatorX += dx * dx;
+    denominatorY += dy * dy;
+  });
+  const denominator = Math.sqrt(denominatorX * denominatorY);
+  return denominator > 0 ? numerator / denominator : null;
 }
 
-function getImpactRows(materialId) {
-  const seed = Number(materialId || 1);
+function correlationLabel(value) {
+  if (value === null) return "ข้อมูลไม่พอ";
+  const strength = Math.abs(value) >= 0.7 ? "สูง" : Math.abs(value) >= 0.4 ? "ปานกลาง" : "ต่ำ";
+  return `${value >= 0 ? "ทิศทางเดียวกัน" : "สวนทาง"} • ${strength}`;
+}
 
-  return [
-    {
-      label: "ราคาวัตถุดิบ",
-      value: 1.2 + (seed % 4) * 0.5,
-      positive: true,
-    },
-    {
-      label: "ต้นทุนพลังงาน",
-      value: 0.7 + (seed % 3) * 0.4,
-      positive: true,
-    },
-    {
-      label: "ค่าเงินบาท",
-      value: 0.3 + (seed % 2) * 0.3,
-      positive: seed % 3 !== 0,
-    },
-    {
-      label: "Demand งานก่อสร้าง",
-      value: 0.4 + (seed % 5) * 0.2,
-      positive: true,
-    },
-  ];
+function trendLabel(change) {
+  if (change === null) return "ข้อมูลไม่เพียงพอ";
+  if (change > 2) return "ราคาเพิ่มขึ้น";
+  if (change < -2) return "ราคาลดลง";
+  return "ราคาค่อนข้างทรงตัว";
 }
 
 export default function Analysis() {
-  const defaultMaterial =
-    materials.find((item) => item.id === "04") ||
-    materials[0];
+  const defaultMaterial = materials.find((item) => String(item.id) === "04") || materials[0];
+  const [selectedId, setSelectedId] = useState(defaultMaterial?.id ?? "");
+  const [analysisMonths, setAnalysisMonths] = useState(12);
+  const selected = useMemo(() => materials.find((item) => String(item.id) === String(selectedId)) || materials[0], [selectedId]);
 
-  const [
-    selectedId,
-    setSelectedId,
-  ] = useState(defaultMaterial?.id);
+  const fullHistory = useMemo(() => priceData.map((row) => ({ key: row?.key, month: row?.month ?? row?.key, price: getPrice(row, selected?.id), source: row })).filter((row) => row.price !== null), [selected]);
+  const visibleHistory = useMemo(() => fullHistory.slice(-Math.max(1, Math.round(numeric(analysisMonths) ?? 12))), [fullHistory, analysisMonths]);
+  const latestPrice = fullHistory.at(-1)?.price ?? numeric(selected?.price);
+  const change1 = getChange(latestPrice, fullHistory.at(-2)?.price);
+  const change3 = getChange(latestPrice, fullHistory.at(-4)?.price);
+  const change6 = getChange(latestPrice, fullHistory.at(-7)?.price);
+  const change12 = getChange(latestPrice, fullHistory.at(-13)?.price ?? (fullHistory.length >= 2 ? fullHistory[0]?.price : null));
 
-  const [
-    materialOpen,
-    setMaterialOpen,
-  ] = useState(false);
+  const correlations = useMemo(() => FACTORS.map((factor) => {
+    const pairs = priceData.map((row) => ({ x: factorValue(row, factor.keys), y: getPrice(row, selected?.id) })).filter((pair) => pair.x !== null && pair.y !== null);
+    const correlation = pearson(pairs);
+    const latest = [...priceData].reverse().map((row) => factorValue(row, factor.keys)).find((value) => value !== null) ?? null;
+    return { ...factor, correlation, latest, samples: pairs.length };
+  }).filter((factor) => factor.samples > 0).sort((a, b) => Math.abs(b.correlation ?? 0) - Math.abs(a.correlation ?? 0)), [selected]);
 
-  const [
-    materialSearch,
-    setMaterialSearch,
-  ] = useState("");
-
-  const dropdownRef = useRef(null);
-
-  const selected = useMemo(() => {
-    return (
-      materials.find(
-        (item) => item.id === selectedId
-      ) || materials[0]
-    );
-  }, [selectedId]);
-
-  const filteredMaterials = useMemo(() => {
-    const query =
-      materialSearch.trim().toLowerCase();
-
-    if (!query) {
-      return materials;
-    }
-
-    return materials.filter((item) => {
-      return (
-        String(item.id)
-          .toLowerCase()
-          .includes(query) ||
-        String(item.name)
-          .toLowerCase()
-          .includes(query) ||
-        String(item.category)
-          .toLowerCase()
-          .includes(query)
-      );
-    });
-  }, [materialSearch]);
-
-  const history = useMemo(() => {
-    return priceData
-      .map((row) => ({
-        key: row.key,
-        month: row.month,
-        price: getPrice(
-          row,
-          selected?.id
-        ),
-      }))
-      .filter((row) =>
-        Number.isFinite(row.price)
-      );
-  }, [selected]);
-
-  const latestPrice =
-    history.at(-1)?.price ??
-    Number(selected?.price || 0);
-
-  const oneMonthAgo =
-    history.at(-2)?.price ?? null;
-
-  const threeMonthsAgo =
-    history.at(-4)?.price ?? null;
-
-  const sixMonthsAgo =
-    history.at(-7)?.price ?? null;
-
-  const twelveMonthsAgo =
-    history.length >= 12
-      ? history.at(-12)?.price
-      : history.at(0)?.price ?? null;
-
-  const change1M = getChange(
-    latestPrice,
-    oneMonthAgo
-  );
-
-  const change3M = getChange(
-    latestPrice,
-    threeMonthsAgo
-  );
-
-  const change6M = getChange(
-    latestPrice,
-    sixMonthsAgo
-  );
-
-  const change12M = getChange(
-    latestPrice,
-    twelveMonthsAgo
-  );
-
-  const driverValues = useMemo(
-    () => getDriverValues(selected?.id),
-    [selected]
-  );
-
-  const impactRows = useMemo(
-    () => getImpactRows(selected?.id),
-    [selected]
-  );
-
-  const totalImpact =
-    impactRows.reduce(
-      (sum, row) =>
-        sum +
-        (row.positive
-          ? row.value
-          : -row.value),
-      0
-    );
-
-  const projectedPrice =
-    latestPrice *
-    (1 + totalImpact / 100);
-
-  const strongestDriver = useMemo(() => {
-    const entries = [
-      ["ราคาวัตถุดิบ", driverValues.rawMaterial],
-      ["ต้นทุนพลังงาน", driverValues.energy],
-      ["ค่าเงินบาท", driverValues.exchange],
-      ["Demand ก่อสร้าง", driverValues.demand],
-      ["ฤดูกาล", driverValues.season],
-    ];
-
-    return entries.sort(
-      (a, b) => b[1] - a[1]
-    )[0];
-  }, [driverValues]);
-
-  useEffect(() => {
-    const close = (event) => {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(
-          event.target
-        )
-      ) {
-        setMaterialOpen(false);
-      }
-    };
-
-    const escape = (event) => {
-      if (event.key === "Escape") {
-        setMaterialOpen(false);
-      }
-    };
-
-    document.addEventListener(
-      "mousedown",
-      close
-    );
-
-    document.addEventListener(
-      "keydown",
-      escape
-    );
-
-    return () => {
-      document.removeEventListener(
-        "mousedown",
-        close
-      );
-
-      document.removeEventListener(
-        "keydown",
-        escape
-      );
-    };
-  }, []);
+  const hasFactorData = correlations.length > 0;
+  const overallTrend = trendLabel(change3 ?? change1);
 
   return (
     <>
-      <PageHeader
-        eyebrow="BANGKOK • PRICE ANALYSIS"
-        title="วิเคราะห์ราคาวัสดุก่อสร้าง"
-        description="อธิบายว่าราคาเปลี่ยนอย่างไร ปัจจัยใดมีผล และข้อมูลนี้ช่วยตัดสินใจด้านต้นทุนอย่างไร"
-      />
+      <style>{ANALYSIS_STYLES}</style>
+      <PageHeader eyebrow="THAI เท • PRICE ANALYSIS" title="วิเคราะห์การเปลี่ยนแปลงราคา" description="ดูแนวโน้มย้อนหลังและความสัมพันธ์กับปัจจัยเศรษฐกิจจากข้อมูลที่มีจริง" />
 
-      <div
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          gap: 9,
-          padding: "11px 14px",
-          marginBottom: 16,
-          borderRadius: 12,
-          background:
-            "rgba(148,163,184,.08)",
-          fontSize: 13,
-          lineHeight: 1.6,
-        }}
-      >
-        <Info
-          size={16}
-          style={{
-            marginTop: 2,
-            flexShrink: 0,
-          }}
-        />
+      <div className="an-notice"><Info size={18} /><div><strong>หน้านี้วิเคราะห์ข้อมูลย้อนหลัง ไม่ใช่การพยากรณ์</strong><span>ค่าความสัมพันธ์ช่วยบอกว่าตัวแปรเคลื่อนไหวร่วมกันเพียงใด แต่ไม่ยืนยันว่าเป็นสาเหตุของการเปลี่ยนราคา</span></div></div>
 
-        <span>
-          หน้านี้มีไว้ตอบคำถามว่า
-          <strong>
-            {" "}“ราคาขึ้นหรือลงเพราะอะไร?”
-          </strong>
-          {" "}และช่วยประเมินความเสี่ยงก่อนตัดสินใจซื้อวัสดุ
-          โดยเวอร์ชันปัจจุบันใช้ข้อมูลตัวอย่างสำหรับกรุงเทพมหานคร
-          ก่อนเชื่อมโมเดล ML และปัจจัยเศรษฐกิจจริง
-        </span>
-      </div>
-
-      <section
-        className="card"
-        style={{
-          marginBottom: 18,
-          overflow: "visible",
-        }}
-      >
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns:
-              "minmax(320px, 1.4fr) minmax(250px, .8fr)",
-            gap: 14,
-          }}
-        >
-          <div
-            ref={dropdownRef}
-            style={{
-              position: "relative",
-            }}
-          >
-            <div
-              className="field-label"
-              style={{
-                marginBottom: 7,
-              }}
-            >
-              วัสดุที่ต้องการวิเคราะห์
-            </div>
-
-            <button
-              type="button"
-              onClick={() =>
-                setMaterialOpen(
-                  (open) => !open
-                )
-              }
-              style={{
-                width: "100%",
-                minHeight: 70,
-                border:
-                  materialOpen
-                    ? "1.5px solid currentColor"
-                    : "1px solid rgba(148,163,184,.23)",
-                borderRadius: 14,
-                background:
-                  "var(--card-bg, #fff)",
-                color: "inherit",
-                padding: "12px 14px",
-                cursor: "pointer",
-                textAlign: "left",
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-              }}
-            >
-              <div
-                style={{
-                  width: 42,
-                  height: 42,
-                  borderRadius: 12,
-                  display: "grid",
-                  placeItems: "center",
-                  flexShrink: 0,
-                  background:
-                    "rgba(148,163,184,.12)",
-                }}
-              >
-                <PackageSearch size={20} />
-              </div>
-
-              <div
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 7,
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 700,
-                      padding: "3px 6px",
-                      borderRadius: 5,
-                      background:
-                        "rgba(148,163,184,.12)",
-                    }}
-                  >
-                    {selected?.id}
-                  </span>
-
-                  <strong
-                    style={{
-                      overflow: "hidden",
-                      textOverflow:
-                        "ellipsis",
-                      whiteSpace:
-                        "nowrap",
-                    }}
-                  >
-                    {selected?.name}
-                  </strong>
-                </div>
-
-                <div
-                  style={{
-                    marginTop: 4,
-                    fontSize: 11,
-                    opacity: 0.52,
-                  }}
-                >
-                  {selected?.category} •{" "}
-                  {selected?.unit}
-                </div>
-              </div>
-
-              <ChevronDown
-                size={17}
-                style={{
-                  transform:
-                    materialOpen
-                      ? "rotate(180deg)"
-                      : "rotate(0deg)",
-                  transition:
-                    "transform .18s",
-                }}
-              />
-            </button>
-
-            {materialOpen && (
-              <div
-                style={{
-                  position: "absolute",
-                  zIndex: 200,
-                  top: "calc(100% + 7px)",
-                  left: 0,
-                  right: 0,
-                  border:
-                    "1px solid rgba(148,163,184,.18)",
-                  borderRadius: 14,
-                  background:
-                    "var(--card-bg, #fff)",
-                  boxShadow:
-                    "0 20px 55px rgba(15,23,42,.16)",
-                  overflow: "hidden",
-                }}
-              >
-                <div
-                  style={{
-                    padding: 10,
-                    borderBottom:
-                      "1px solid rgba(148,163,184,.12)",
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      padding:
-                        "9px 10px",
-                      borderRadius: 9,
-                      background:
-                        "rgba(148,163,184,.08)",
-                    }}
-                  >
-                    <Search size={15} />
-
-                    <input
-                      autoFocus
-                      value={
-                        materialSearch
-                      }
-                      onChange={(event) =>
-                        setMaterialSearch(
-                          event.target.value
-                        )
-                      }
-                      placeholder="ค้นหารหัส ชื่อ หรือหมวดวัสดุ..."
-                      style={{
-                        width: "100%",
-                        border: 0,
-                        outline: 0,
-                        background:
-                          "transparent",
-                        color: "inherit",
-                      }}
-                    />
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    maxHeight: 340,
-                    overflowY: "auto",
-                    padding: 6,
-                  }}
-                >
-                  {filteredMaterials.map(
-                    (material) => {
-                      const active =
-                        material.id ===
-                        selected?.id;
-
-                      return (
-                        <button
-                          key={
-                            material.id
-                          }
-                          type="button"
-                          onClick={() => {
-                            setSelectedId(
-                              material.id
-                            );
-
-                            setMaterialOpen(
-                              false
-                            );
-
-                            setMaterialSearch(
-                              ""
-                            );
-                          }}
-                          style={{
-                            width:
-                              "100%",
-                            display:
-                              "flex",
-                            alignItems:
-                              "center",
-                            gap: 10,
-                            padding:
-                              "10px 9px",
-                            border: 0,
-                            borderRadius:
-                              9,
-                            background:
-                              active
-                                ? "rgba(148,163,184,.13)"
-                                : "transparent",
-                            color:
-                              "inherit",
-                            cursor:
-                              "pointer",
-                            textAlign:
-                              "left",
-                          }}
-                        >
-                          <div
-                            style={{
-                              width: 32,
-                              height: 32,
-                              borderRadius:
-                                8,
-                              display:
-                                "grid",
-                              placeItems:
-                                "center",
-                              background:
-                                "rgba(148,163,184,.11)",
-                              fontSize: 10,
-                              fontWeight:
-                                700,
-                            }}
-                          >
-                            {material.id}
-                          </div>
-
-                          <div
-                            style={{
-                              flex: 1,
-                              minWidth: 0,
-                            }}
-                          >
-                            <div
-                              style={{
-                                fontSize:
-                                  13,
-                                fontWeight:
-                                  600,
-                              }}
-                            >
-                              {
-                                material.name
-                              }
-                            </div>
-
-                            <div
-                              style={{
-                                marginTop:
-                                  2,
-                                fontSize:
-                                  10,
-                                opacity:
-                                  0.48,
-                              }}
-                            >
-                              {
-                                material.category
-                              }{" "}
-                              •{" "}
-                              {
-                                material.unit
-                              }
-                            </div>
-                          </div>
-
-                          {active && (
-                            <Check
-                              size={16}
-                            />
-                          )}
-                        </button>
-                      );
-                    }
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div>
-            <div
-              className="field-label"
-              style={{
-                marginBottom: 7,
-              }}
-            >
-              พื้นที่วิเคราะห์
-            </div>
-
-            <div
-              style={{
-                minHeight: 70,
-                border:
-                  "1px solid rgba(148,163,184,.23)",
-                borderRadius: 14,
-                background:
-                  "rgba(148,163,184,.06)",
-                padding:
-                  "12px 14px",
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-              }}
-            >
-              <div
-                style={{
-                  width: 42,
-                  height: 42,
-                  borderRadius: 12,
-                  display: "grid",
-                  placeItems: "center",
-                  background:
-                    "rgba(148,163,184,.12)",
-                }}
-              >
-                <MapPin size={20} />
-              </div>
-
-              <div>
-                <strong>
-                  กรุงเทพมหานคร
-                </strong>
-
-                <div
-                  style={{
-                    marginTop: 4,
-                    fontSize: 11,
-                    opacity: 0.52,
-                  }}
-                >
-                  พื้นที่นำร่องของระบบ
-                </div>
-              </div>
-            </div>
-          </div>
+      <section className="card an-controls">
+        <div className="an-control-grid">
+          <label><span>วัสดุที่ต้องการวิเคราะห์</span><div><PackageSearch size={17} /><select value={selected?.id ?? ""} onChange={(event) => setSelectedId(event.target.value)}>{materials.map((item) => <option key={item.id} value={item.id}>{item.id} — {item.name}</option>)}</select></div></label>
+          <label><span>ช่วงข้อมูลย้อนหลัง</span><div><BarChart3 size={17} /><input inputMode="numeric" type="number" min="1" step="1" value={analysisMonths} onChange={(event) => setAnalysisMonths(event.target.value)} /><i>เดือน</i></div></label>
+          <label><span>พื้นที่</span><div className="readonly"><MapPin size={17} /><strong>กรุงเทพมหานคร</strong></div></label>
         </div>
       </section>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns:
-            "repeat(auto-fit, minmax(170px, 1fr))",
-          gap: 12,
-          marginBottom: 18,
-        }}
-      >
-        <MetricCard
-          label="ราคาปัจจุบัน"
-          value={`฿${formatPrice(
-            latestPrice
-          )}`}
-          note={selected?.unit}
-        />
-
-        <MetricCard
-          label="เปลี่ยนแปลง 1 เดือน"
-          value={formatPercent(
-            change1M
-          )}
-          note="เทียบเดือนก่อน"
-          direction={change1M}
-        />
-
-        <MetricCard
-          label="เปลี่ยนแปลง 3 เดือน"
-          value={formatPercent(
-            change3M
-          )}
-          note="แนวโน้มระยะสั้น"
-          direction={change3M}
-        />
-
-        <MetricCard
-          label="เปลี่ยนแปลง 12 เดือน"
-          value={formatPercent(
-            change12M
-          )}
-          note="แนวโน้มระยะยาว"
-          direction={change12M}
-        />
+      <div className="an-stats">
+        <Metric label="ราคาล่าสุดใน Dataset" value={`฿${formatPrice(latestPrice)}`} note={`${fullHistory.at(-1)?.month || "ไม่ระบุเดือน"} • ${selected?.unit || "—"}`} />
+        <ChangeMetric label="เปลี่ยนแปลง 1 เดือน" value={change1} />
+        <ChangeMetric label="เปลี่ยนแปลง 3 เดือน" value={change3} />
+        <ChangeMetric label="เปลี่ยนแปลง 12 เดือน" value={change12} />
       </div>
 
-      <div className="grid-2">
-        <section className="card chart-card">
-          <div className="card-head">
-            <div>
-              <h2>
-                แนวโน้มราคาย้อนหลัง
-              </h2>
-
-              <span>
-                {selected?.name} •{" "}
-                กรุงเทพมหานคร
-              </span>
-            </div>
-
-            <TrendingUp size={18} />
-          </div>
-
-          <div className="chart-wrap">
-            <ResponsiveContainer
-              width="100%"
-              height="100%"
-            >
-              <AreaChart
-                data={history}
-              >
-                <CartesianGrid
-                  strokeDasharray="3 3"
-                  vertical={false}
-                />
-
-                <XAxis
-                  dataKey="month"
-                  tickLine={false}
-                  axisLine={false}
-                />
-
-                <YAxis
-                  tickLine={false}
-                  axisLine={false}
-                  domain={[
-                    "auto",
-                    "auto",
-                  ]}
-                  tickFormatter={(
-                    value
-                  ) =>
-                    `฿${Number(
-                      value
-                    ).toLocaleString(
-                      "th-TH",
-                      {
-                        notation:
-                          "compact",
-                        maximumFractionDigits: 1,
-                      }
-                    )}`
-                  }
-                />
-
-                <Tooltip
-                  formatter={(
-                    value
-                  ) => [
-                    `฿${formatPrice(
-                      value
-                    )} ${
-                      selected?.unit
-                    }`,
-                    selected?.name,
-                  ]}
-                />
-
-                <Area
-                  type="monotone"
-                  dataKey="price"
-                  strokeWidth={2.5}
-                  fillOpacity={0.12}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
+      <div className="an-main-grid">
+        <section className="card an-chart-card">
+          <div className="an-card-head"><div><h2><TrendingUp size={18} /> แนวโน้มราคาย้อนหลัง</h2><p>{selected?.name} • แสดง {visibleHistory.length} เดือนที่มีข้อมูล</p></div><a href={OFFICIAL_PRICE_URL} target="_blank" rel="noreferrer">แหล่งราคาภาครัฐ</a></div>
+          {visibleHistory.length ? <div className="an-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={visibleHistory} margin={{ top: 12, right: 12, left: 2, bottom: 4 }}><defs><linearGradient id="analysisFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2563eb" stopOpacity={0.24} /><stop offset="100%" stopColor="#2563eb" stopOpacity={0} /></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="month" tickLine={false} axisLine={false} /><YAxis width={64} tickLine={false} axisLine={false} domain={["auto", "auto"]} tickFormatter={(value) => `฿${Number(value).toLocaleString("th-TH", { notation: "compact", maximumFractionDigits: 1 })}`} /><Tooltip formatter={(value) => [`฿${formatPrice(value)} ${selected?.unit || ""}`, "ราคา"]} /><Area type="monotone" dataKey="price" stroke="#2563eb" fill="url(#analysisFill)" strokeWidth={2.5} /></AreaChart></ResponsiveContainer></div> : <EmptyFactors text="ยังไม่มีประวัติราคาสำหรับวัสดุนี้" />}
         </section>
 
-        <section className="card">
-          <div className="card-head">
-            <div>
-              <h2>
-                ปัจจัยที่มีผลต่อราคา
-              </h2>
-
-              <span>
-                Feature importance • Prototype
-              </span>
-            </div>
-
-            <Sparkles size={18} />
-          </div>
-
-          <Driver
-            label="ราคาวัตถุดิบ"
-            value={
-              driverValues.rawMaterial
-            }
-          />
-
-          <Driver
-            label="ต้นทุนพลังงาน"
-            value={
-              driverValues.energy
-            }
-          />
-
-          <Driver
-            label="ค่าเงินบาท"
-            value={
-              driverValues.exchange
-            }
-          />
-
-          <Driver
-            label="Demand ก่อสร้าง"
-            value={
-              driverValues.demand
-            }
-          />
-
-          <Driver
-            label="ฤดูกาล"
-            value={
-              driverValues.season
-            }
-          />
-
-          <div className="insight-box">
-            <Info size={16} />
-
-            <span>
-              ปัจจัยที่มีน้ำหนักสูงสุดในตัวอย่างนี้คือ
-              <strong>
-                {" "}
-                {strongestDriver?.[0]}
-              </strong>
-              {" "}({strongestDriver?.[1]}%)
-            </span>
-          </div>
-        </section>
+        <aside className="card an-reading">
+          <span>สรุปจากข้อมูลย้อนหลัง</span><strong>{overallTrend}</strong><p>ในช่วง 3 เดือนล่าสุด {change3 === null ? "ยังมีข้อมูลไม่พอสำหรับสรุป" : `ราคาเปลี่ยนแปลง ${change3 >= 0 ? "+" : ""}${change3.toFixed(1)}%`} การตัดสินใจจัดซื้อควรดูร่วมกับราคาหน้างานและผลพยากรณ์ ML</p>
+          <dl><div><dt>6 เดือน</dt><dd>{change6 === null ? "—" : `${change6 >= 0 ? "+" : ""}${change6.toFixed(1)}%`}</dd></div><div><dt>ข้อมูลราคา</dt><dd>{fullHistory.length} เดือน</dd></div><div><dt>ข้อมูลปัจจัย</dt><dd>{hasFactorData ? `${correlations.length} ตัวแปร` : "ยังไม่มี"}</dd></div></dl>
+        </aside>
       </div>
 
-      <div
-        className="grid-2"
-        style={{
-          marginTop: 18,
-        }}
-      >
-        <section className="card">
-          <div className="card-head">
-            <div>
-              <h2>
-                ผลกระทบต่อราคา
-              </h2>
-
-              <span>
-                อธิบายทิศทางของปัจจัย
-              </span>
-            </div>
-          </div>
-
-          {impactRows.map((row) => (
-            <div
-              key={row.label}
-              className={
-                row.positive
-                  ? "explain-row positive"
-                  : "explain-row negative"
-              }
-            >
-              <span>
-                {row.label}
-              </span>
-
-              <b>
-                {row.positive
-                  ? "+"
-                  : "-"}
-                {row.value.toFixed(1)}%
-              </b>
-            </div>
-          ))}
-
-          <div className="explain-total">
-            <span>
-              ราคาปัจจุบัน
-            </span>
-
-            <b>
-              ฿
-              {formatPrice(
-                latestPrice
-              )}
-            </b>
-          </div>
-
-          <div className="explain-total">
-            <span>
-              ราคาจากตัวอย่างผลกระทบ
-            </span>
-
-            <b>
-              ฿
-              {formatPrice(
-                projectedPrice
-              )}
-            </b>
-          </div>
-        </section>
-
-        <section className="card insight-large">
-          <div className="insight-icon">
-            <Sparkles size={20} />
-          </div>
-
-          <div>
-            <div className="eyebrow">
-              PRICE INSIGHT
-            </div>
-
-            <h2>
-              ข้อมูลนี้ช่วยตัดสินใจอะไร?
-            </h2>
-
-            <p>
-              ถ้าราคามีแนวโน้มเพิ่มขึ้นต่อเนื่อง
-              ผู้ใช้สามารถพิจารณาเร่งจัดซื้อหรือกันงบสำรอง
-              หากราคาทรงตัวหรือลดลง
-              อาจแบ่งซื้อเป็นช่วงเพื่อลดความเสี่ยงด้านต้นทุน
-            </p>
-
-            <div
-              style={{
-                marginTop: 14,
-                display: "grid",
-                gap: 8,
-              }}
-            >
-              <DecisionRow
-                label="แนวโน้ม 3 เดือน"
-                value={formatPercent(
-                  change3M
-                )}
-              />
-
-              <DecisionRow
-                label="แนวโน้ม 6 เดือน"
-                value={formatPercent(
-                  change6M
-                )}
-              />
-
-              <DecisionRow
-                label="ปัจจัยหลัก"
-                value={
-                  strongestDriver?.[0] ||
-                  "-"
-                }
-              />
-            </div>
-          </div>
-        </section>
-      </div>
+      <section className="card an-factors">
+        <div className="an-card-head"><div><h2><Database size={18} /> ปัจจัยที่อาจสัมพันธ์กับราคา</h2><p>คำนวณ Pearson correlation จากเดือนที่มีข้อมูลทั้งราคาและปัจจัยอย่างน้อย 6 จุด</p></div></div>
+        {hasFactorData ? <div className="an-factor-list">{correlations.map((factor) => <article key={factor.id}><div><strong>{factor.label}</strong><small>{factor.samples} เดือนที่จับคู่ข้อมูลได้ • ค่าล่าสุด {factor.latest ?? "—"}</small></div><div className={`an-correlation ${(factor.correlation ?? 0) >= 0 ? "positive" : "negative"}`}><b>{factor.correlation === null ? "—" : factor.correlation.toFixed(2)}</b><span>{correlationLabel(factor.correlation)}</span></div></article>)}</div> : <EmptyFactors text="ยังไม่พบข้อมูล Oil / CPI / FX / PPI หรือปัจจัยอื่นใน priceData เมื่อเชื่อมข้อมูลแล้วระบบจะคำนวณความสัมพันธ์โดยอัตโนมัติ" />}
+      </section>
     </>
   );
 }
 
-function formatPercent(value) {
-  if (
-    value === null ||
-    value === undefined ||
-    !Number.isFinite(value)
-  ) {
-    return "-";
-  }
-
-  return `${
-    value >= 0 ? "+" : ""
-  }${value.toFixed(1)}%`;
+function Metric({ label, value, note }) {
+  return <article className="card an-metric"><span>{label}</span><strong>{value}</strong><small>{note}</small></article>;
 }
 
-function MetricCard({
-  label,
-  value,
-  note,
-  direction,
-}) {
-  return (
-    <div
-      className="card"
-      style={{
-        padding: 16,
-      }}
-    >
-      <div
-        style={{
-          fontSize: 11,
-          opacity: 0.52,
-          marginBottom: 7,
-        }}
-      >
-        {label}
-      </div>
-
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 5,
-          fontSize: 21,
-          fontWeight: 700,
-        }}
-      >
-        {direction !== undefined &&
-          direction !== null &&
-          (direction >= 0 ? (
-            <ArrowUpRight size={18} />
-          ) : (
-            <ArrowDownRight
-              size={18}
-            />
-          ))}
-
-        {value}
-      </div>
-
-      <div
-        style={{
-          marginTop: 5,
-          fontSize: 10,
-          opacity: 0.47,
-        }}
-      >
-        {note}
-      </div>
-    </div>
-  );
+function ChangeMetric({ label, value }) {
+  const positive = value !== null && value >= 0;
+  return <article className="card an-metric"><span>{label}</span><strong>{value === null ? "—" : `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`}</strong><small className={value === null ? "" : positive ? "up" : "down"}>{value === null ? "ข้อมูลไม่เพียงพอ" : <>{positive ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}{positive ? "เพิ่มขึ้น" : "ลดลง"}</>}</small></article>;
 }
 
-function DecisionRow({
-  label,
-  value,
-}) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        justifyContent:
-          "space-between",
-        gap: 10,
-        padding:
-          "9px 11px",
-        borderRadius: 9,
-        background:
-          "rgba(148,163,184,.08)",
-        fontSize: 12,
-      }}
-    >
-      <span
-        style={{
-          opacity: 0.62,
-        }}
-      >
-        {label}
-      </span>
-
-      <strong>{value}</strong>
-    </div>
-  );
+function EmptyFactors({ text }) {
+  return <div className="an-empty"><Database size={23} /><strong>รอข้อมูล</strong><span>{text}</span></div>;
 }
+
+const ANALYSIS_STYLES = `
+  .an-notice { display:flex; align-items:flex-start; gap:10px; margin-bottom:16px; padding:12px 14px; border-radius:12px; background:rgba(59,130,246,.07); color:#1d4ed8; font-size:10px; line-height:1.55; }
+  .an-notice svg { flex:0 0 auto; margin-top:2px; } .an-notice strong,.an-notice span { display:block; } .an-notice span { margin-top:2px; opacity:.72; }
+  .an-controls { margin-bottom:14px; } .an-control-grid { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(180px,.7fr) minmax(190px,.7fr); gap:11px; }
+  .an-control-grid label > span { display:block; margin-bottom:6px; font-size:9px; font-weight:700; opacity:.55; } .an-control-grid label > div { min-height:45px; display:flex; align-items:center; gap:8px; padding:0 11px; border:1px solid rgba(148,163,184,.23); border-radius:10px; background:rgba(148,163,184,.035); }
+  .an-control-grid svg { flex:0 0 auto; opacity:.5; } .an-control-grid select,.an-control-grid input { width:100%; min-width:0; border:0; outline:0; background:transparent; color:inherit; font:inherit; } .an-control-grid input { font-weight:750; } .an-control-grid i { font-size:9px; font-style:normal; opacity:.5; }
+  .an-control-grid .readonly { opacity:.7; } .an-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-bottom:14px; }
+  .an-metric { padding:14px !important; } .an-metric > span,.an-metric small { display:block; font-size:9px; opacity:.5; } .an-metric strong { display:block; margin:6px 0 4px; font-size:18px; } .an-metric small { min-height:17px; } .an-metric small.up,.an-metric small.down { display:flex; align-items:center; gap:3px; opacity:1; } .an-metric small.up { color:#dc2626; } .an-metric small.down { color:#059669; }
+  .an-main-grid { display:grid; grid-template-columns:minmax(0,1.55fr) minmax(260px,.45fr); gap:14px; margin-bottom:14px; } .an-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:13px; }
+  .an-card-head h2 { display:flex; align-items:center; gap:7px; margin:0; font-size:15px; } .an-card-head p { margin:4px 0 0; font-size:9px; opacity:.5; } .an-card-head a { color:#2563eb; font-size:9px; font-weight:700; text-decoration:none; }
+  .an-chart { height:300px; } .an-reading { color:#f8fafc; background:linear-gradient(145deg,#17243a,#0f172a); } .an-reading > span { font-size:9px; opacity:.5; } .an-reading > strong { display:block; margin:8px 0 5px; font-size:20px; } .an-reading > p { margin:0; font-size:10px; line-height:1.6; opacity:.62; }
+  .an-reading dl { display:grid; gap:7px; margin:16px 0 0; padding-top:13px; border-top:1px solid rgba(255,255,255,.1); } .an-reading dl div { display:flex; justify-content:space-between; gap:8px; font-size:9px; } .an-reading dt { opacity:.5; } .an-reading dd { margin:0; font-weight:750; }
+  .an-factor-list { display:grid; gap:8px; } .an-factor-list article { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:11px 12px; border:1px solid rgba(148,163,184,.14); border-radius:9px; } .an-factor-list strong,.an-factor-list small { display:block; } .an-factor-list strong { font-size:11px; } .an-factor-list small { margin-top:3px; font-size:8px; opacity:.48; }
+  .an-correlation { min-width:145px; text-align:right; } .an-correlation b,.an-correlation span { display:block; } .an-correlation b { font-size:15px; } .an-correlation span { margin-top:2px; font-size:8px; opacity:.55; }
+  .an-empty { min-height:150px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; padding:20px; text-align:center; border:1px dashed rgba(148,163,184,.24); border-radius:10px; } .an-empty svg { opacity:.35; } .an-empty strong { font-size:12px; } .an-empty span { max-width:560px; font-size:9px; line-height:1.55; opacity:.5; }
+  @media (max-width:900px) { .an-control-grid { grid-template-columns:1fr 1fr; } .an-control-grid label:first-child { grid-column:1/-1; } .an-main-grid { grid-template-columns:1fr; } }
+  @media (max-width:620px) { .an-controls { padding:14px !important; } .an-control-grid { grid-template-columns:1fr; } .an-control-grid label:first-child { grid-column:auto; } .an-control-grid select,.an-control-grid input { font-size:16px; } .an-stats { grid-template-columns:1fr 1fr; } .an-metric strong { font-size:15px; } .an-card-head { flex-direction:column; } .an-chart { height:250px; margin-left:-8px; } .an-factor-list article { align-items:flex-start; flex-direction:column; } .an-correlation { min-width:0; text-align:left; } }
+  @media (max-width:360px) { .an-stats { grid-template-columns:1fr; } }
+`;

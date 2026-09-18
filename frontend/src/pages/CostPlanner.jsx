@@ -23,7 +23,13 @@ import { PageHeader } from "../components/Shared.jsx";
 
 const COST_TYPES = { material: "ค่าวัสดุ", labor: "ค่าแรง", equipment: "เครื่องจักร/ขนส่ง" };
 const TYPE_COLORS = { material: "#2563eb", labor: "#059669", equipment: "#d97706" };
+const BOQ_DISCIPLINES = {
+  structure: "หมวดงานโครงสร้าง",
+  architecture: "หมวดงานสถาปัตย์",
+  system: "หมวดงานระบบ",
+};
 const OFFICIAL_PRICE_URL = "https://index.tpso.go.th/construction-material-prices/prices-building-materials";
+const OFFICIAL_PRICE_NOTE = "ราคาวัสดุที่แสดงเป็นราคากลางหรือข้อมูลอ้างอิงจากภาครัฐ ไม่ใช่ราคาขายปลีก ใบเสนอราคา หรือราคาที่ผู้รับเหมาซื้อได้จริง ราคาหน้าร้านอาจแตกต่างตามพื้นที่ ยี่ห้อ ปริมาณซื้อ ค่าขนส่ง และเงื่อนไขการค้า กรุณาขอใบเสนอราคาจากร้านค้าก่อนจัดซื้อหรือยื่นราคา";
 const DRAFT_STORAGE_KEY = "thai-the-structural-boq-professional-v1";
 const number = (value) => Math.max(0, Number(value) || 0);
 
@@ -84,6 +90,18 @@ function equipmentResource(key, name, unit, coefficient) {
   return { key, name, unit, coefficient, type: "equipment", wastePct: 0 };
 }
 
+function manualTradeResources(id, name, unit, keywords = [], includeEquipment = false) {
+  return [
+    materialResource(`${id}_material`, `วัสดุ${name}`, unit, 1, keywords, 0),
+    laborResource(`${id}_labor`, `ค่าแรง${name}`, unit, 1),
+    ...(includeEquipment ? [equipmentResource(`${id}_equipment`, `เครื่องมือ/เครื่องจักร${name}`, unit, 1)] : []),
+  ];
+}
+
+function manualTradeItem({ id, code, name, unit, hint, keywords = [], includeEquipment = false }) {
+  return { id, code, name, unit, hint, resources: manualTradeResources(id, name, unit, keywords, includeEquipment) };
+}
+
 function reinforcedConcreteResources({ rebarKg, formworkSqm }) {
   return [
     materialResource("ready_concrete", "คอนกรีตผสมเสร็จสำหรับงานโครงสร้าง", "ลบ.ม.", 1, ["คอนกรีตผสมเสร็จ", "คอนกรีต"], 3),
@@ -100,7 +118,7 @@ function reinforcedConcreteResources({ rebarKg, formworkSqm }) {
 
 const BOQ_SECTIONS = [
   {
-    id: "earthwork", code: "A", title: "งานเตรียมพื้นที่และงานดิน",
+    id: "earthwork", code: "A", title: "งานดิน", discipline: "structure",
     items: [
       {
         id: "site_clearance", code: "A01", name: "เคลียร์พื้นที่และปรับระดับ", unit: "ตร.ม.", hint: "พื้นที่อาคารและพื้นที่ทำงานโดยรอบ",
@@ -125,7 +143,7 @@ const BOQ_SECTIONS = [
     ],
   },
   {
-    id: "foundation", code: "B", title: "งานฐานรากและเสาเข็ม",
+    id: "foundation", code: "B", title: "งานเสาเข็มและฐานราก", discipline: "structure",
     items: [
       {
         id: "concrete_pile", code: "B01", name: "เสาเข็มคอนกรีตอัดแรงพร้อมตอก", unit: "ม.", hint: "ใส่ความยาวเสาเข็มรวมทุกต้น",
@@ -138,7 +156,7 @@ const BOQ_SECTIONS = [
     ],
   },
   {
-    id: "superstructure", code: "C", title: "งานโครงสร้างคอนกรีตเสริมเหล็ก",
+    id: "superstructure", code: "C", title: "งานคอนกรีต แบบหล่อ และเหล็กเสริม", discipline: "structure",
     items: [
       { id: "column", code: "C01", name: "เสาคอนกรีตเสริมเหล็ก", unit: "ลบ.ม.", hint: "กว้าง × ลึก × สูง รวมทุกต้นและทุกชั้น", resources: reinforcedConcreteResources({ rebarKg: 210, formworkSqm: 13 }) },
       { id: "beam", code: "C02", name: "คานคอนกรีตเสริมเหล็ก", unit: "ลบ.ม.", hint: "หน้ากว้าง × ความลึก × ความยาวรวมทุกชั้น", resources: reinforcedConcreteResources({ rebarKg: 205, formworkSqm: 11 }) },
@@ -149,10 +167,19 @@ const BOQ_SECTIONS = [
     ],
   },
   {
-    id: "roof", code: "D", title: "งานโครงสร้างหลังคา",
+    id: "precast", code: "D", title: "งานแผ่นพื้นสำเร็จรูป", discipline: "structure",
+    items: [
+      manualTradeItem({ id: "precast_slab", code: "D01", name: "แผ่นพื้นคอนกรีตสำเร็จรูปพร้อมติดตั้ง", unit: "ตร.ม.", hint: "พื้นที่แผ่นพื้นรวมช่องเปิดและระยะวางพาดตามแบบ", keywords: ["แผ่นพื้นสำเร็จรูป", "แผ่นพื้น"] }),
+      manualTradeItem({ id: "precast_topping", code: "D02", name: "คอนกรีตทับหน้าแผ่นพื้น", unit: "ลบ.ม.", hint: "พื้นที่พื้น × ความหนาคอนกรีตทับหน้า", keywords: ["คอนกรีตผสมเสร็จ", "คอนกรีต"] }),
+      manualTradeItem({ id: "precast_mesh", code: "D03", name: "ตะแกรงเหล็กไวร์เมช", unit: "ตร.ม.", hint: "พื้นที่ไวร์เมชรวมระยะทาบ", keywords: ["ไวร์เมช", "ตะแกรงเหล็ก"] }),
+      { id: "precast_bracing", code: "D04", name: "ค้ำยันและเครื่องมือประกอบแผ่นพื้น", unit: "ตร.ม.", hint: "พื้นที่ที่ต้องค้ำยันระหว่างติดตั้ง", resources: [laborResource("precast_bracing_labor", "ค่าแรงค้ำยันแผ่นพื้น", "ตร.ม.", 1), equipmentResource("precast_bracing_equipment", "ค่าเช่าค้ำยันและเครื่องมือ", "ตร.ม.", 1)] },
+    ],
+  },
+  {
+    id: "structural_steel", code: "E", title: "งานเหล็กรูปพรรณ", discipline: "structure",
     items: [
       {
-        id: "roof_steel", code: "D01", name: "โครงหลังคาเหล็กรูปพรรณ", unit: "กก.", hint: "น้ำหนักเหล็กรวมตามแบบ Shop drawing",
+        id: "roof_steel", code: "E01", name: "โครงหลังคาเหล็กรูปพรรณ", unit: "กก.", hint: "น้ำหนักเหล็กรวมตามแบบ Shop drawing",
         resources: [
           materialResource("structural_steel", "เหล็กรูปพรรณ", "กก.", 1, ["เหล็กรูปพรรณ", "เหล็กกล่อง", "เหล็กตัวซี", "เหล็ก"], 5),
           materialResource("welding", "ลวดเชื่อม", "กก.", 0.015, ["ลวดเชื่อม"], 5),
@@ -161,11 +188,152 @@ const BOQ_SECTIONS = [
           equipmentResource("steel_lifting", "เครื่องมือเชื่อมและยกติดตั้ง", "กก.", 1),
         ],
       },
+      manualTradeItem({ id: "misc_structural_steel", code: "E02", name: "โครงสร้างเหล็กและงานเหล็กประกอบอื่นๆ", unit: "กก.", hint: "น้ำหนักเหล็กรวมจากรายการตัดและ Shop drawing", keywords: ["เหล็กรูปพรรณ", "เหล็กกล่อง", "เหล็ก"] , includeEquipment: true }),
+    ],
+  },
+  {
+    id: "architectural_roof", code: "F", title: "งานหลังคาและวัสดุหลังคา", discipline: "architecture",
+    items: [
+      manualTradeItem({ id: "roof_covering", code: "F01", name: "วัสดุมุงหลังคาพร้อมอุปกรณ์ยึด", unit: "ตร.ม.", hint: "พื้นที่หลังคาตามความลาด รวมระยะซ้อนทับ", keywords: ["กระเบื้องหลังคา", "วัสดุมุงหลังคา", "เมทัลชีท"] }),
+      manualTradeItem({ id: "roof_insulation", code: "F02", name: "ฉนวนกันความร้อนใต้หลังคา", unit: "ตร.ม.", hint: "พื้นที่ติดตั้งฉนวนจริง", keywords: ["ฉนวนกันความร้อน", "ฉนวน"] }),
+      manualTradeItem({ id: "roof_flashing", code: "F03", name: "ครอบหลังคา แผ่นปิดรอยต่อ และ Flashing", unit: "ม.", hint: "ความยาวรวมตามแนวสัน ตะเข้ และรอยต่อ", keywords: ["ครอบหลังคา", "แผ่นปิดรอยต่อ"] }),
+      manualTradeItem({ id: "roof_gutter", code: "F04", name: "รางน้ำฝนและท่อระบายน้ำฝน", unit: "ม.", hint: "ความยาวรางและท่อรวมทั้งหมด", keywords: ["รางน้ำฝน", "ท่อพีวีซี", "ท่อ"] }),
+      manualTradeItem({ id: "fascia_board", code: "F05", name: "เชิงชายและปั้นลม", unit: "ม.", hint: "ความยาวติดตั้งรวม", keywords: ["ไม้เชิงชาย", "เชิงชาย"] }),
+    ],
+  },
+  {
+    id: "architectural_wall", code: "G", title: "งานผนังก่อและฉาบ", discipline: "architecture",
+    items: [
+      manualTradeItem({ id: "masonry_wall", code: "G01", name: "ผนังก่ออิฐมอญ/อิฐบล็อก/อิฐมวลเบา", unit: "ตร.ม.", hint: "พื้นที่ผนังสุทธิหักช่องเปิด", keywords: ["อิฐมอญ", "อิฐบล็อก", "อิฐมวลเบา", "อิฐ"] }),
+      manualTradeItem({ id: "internal_plaster", code: "G02", name: "ฉาบปูนผนังภายใน", unit: "ตร.ม.", hint: "พื้นที่ฉาบจริงรวมเสาและคานที่ต้องฉาบ", keywords: ["ปูนฉาบ", "ปูนซีเมนต์"] }),
+      manualTradeItem({ id: "external_plaster", code: "G03", name: "ฉาบปูนผนังภายนอก", unit: "ตร.ม.", hint: "พื้นที่ฉาบภายนอกสุทธิ", keywords: ["ปูนฉาบ", "ปูนซีเมนต์"] }),
+      manualTradeItem({ id: "wall_lintel", code: "G04", name: "เอ็นและทับหลังผนัง", unit: "ม.", hint: "ความยาวเอ็นและทับหลังรอบช่องเปิด", keywords: ["เหล็กเส้น", "คอนกรีต"] }),
+    ],
+  },
+  {
+    id: "architectural_ceiling", code: "H", title: "งานฝ้าเพดาน", discipline: "architecture",
+    items: [
+      manualTradeItem({ id: "gypsum_ceiling", code: "H01", name: "ฝ้ายิปซัมฉาบเรียบพร้อมโครงคร่าว", unit: "ตร.ม.", hint: "พื้นที่ฝ้าภายในสุทธิ", keywords: ["แผ่นยิปซัม", "ยิปซัม", "โครงคร่าว"] }),
+      manualTradeItem({ id: "eaves_ceiling", code: "H02", name: "ฝ้าชายคาภายนอกพร้อมโครงคร่าว", unit: "ตร.ม.", hint: "พื้นที่ฝ้าชายคาและภายนอก", keywords: ["แผ่นไฟเบอร์ซีเมนต์", "ฝ้าชายคา"] }),
+      manualTradeItem({ id: "ceiling_access", code: "H03", name: "ช่องเปิดเซอร์วิสและอุปกรณ์ฝ้า", unit: "ชุด", hint: "จำนวนช่องเซอร์วิสและอุปกรณ์ประกอบ", keywords: ["ช่องเซอร์วิส", "อุปกรณ์ฝ้า"] }),
+    ],
+  },
+  {
+    id: "architectural_finish", code: "I", title: "งานผิวตกแต่งพื้นและผนัง", discipline: "architecture",
+    items: [
+      manualTradeItem({ id: "floor_tile", code: "I01", name: "กระเบื้องพื้นพร้อมปูนกาวและยาแนว", unit: "ตร.ม.", hint: "พื้นที่ปูจริง รวมเศษตัดตามรูปแบบการปู", keywords: ["กระเบื้องปูพื้น", "กระเบื้อง", "ปูนกาว"] }),
+      manualTradeItem({ id: "wall_tile", code: "I02", name: "กระเบื้องผนังพร้อมปูนกาวและยาแนว", unit: "ตร.ม.", hint: "พื้นที่กรุผนังจริง", keywords: ["กระเบื้องบุผนัง", "กระเบื้อง", "ปูนกาว"] }),
+      manualTradeItem({ id: "vinyl_laminate_floor", code: "I03", name: "พื้นลามิเนต/ไวนิล/วัสดุปูพื้นอื่น", unit: "ตร.ม.", hint: "พื้นที่ติดตั้งสุทธิ", keywords: ["พื้นลามิเนต", "กระเบื้องยาง", "ไวนิล"] }),
+      manualTradeItem({ id: "skirting", code: "I04", name: "บัวเชิงผนังและวัสดุปิดขอบ", unit: "ม.", hint: "ความยาวติดตั้งรวม", keywords: ["บัวเชิงผนัง", "บัว"] }),
+      manualTradeItem({ id: "floor_screed", code: "I05", name: "ปูนปรับระดับและงานเตรียมผิว", unit: "ตร.ม.", hint: "พื้นที่ปรับระดับก่อนปูผิวสำเร็จ", keywords: ["ปูนปรับระดับ", "ปูนซีเมนต์"] }),
+    ],
+  },
+  {
+    id: "architectural_sanitary", code: "J", title: "งานสุขภัณฑ์", discipline: "architecture",
+    items: [
+      manualTradeItem({ id: "toilet_fixture", code: "J01", name: "โถสุขภัณฑ์พร้อมอุปกรณ์", unit: "ชุด", hint: "จำนวนชุดที่ติดตั้งครบพร้อมใช้งาน", keywords: ["โถสุขภัณฑ์", "สุขภัณฑ์"] }),
+      manualTradeItem({ id: "wash_basin", code: "J02", name: "อ่างล้างหน้าพร้อมก๊อกและอุปกรณ์", unit: "ชุด", hint: "จำนวนชุดอ่างล้างหน้า", keywords: ["อ่างล้างหน้า", "ก๊อกน้ำ"] }),
+      manualTradeItem({ id: "shower_set", code: "J03", name: "ฝักบัวและชุดก๊อกอาบน้ำ", unit: "ชุด", hint: "จำนวนชุดฝักบัวและก๊อก", keywords: ["ฝักบัว", "ก๊อกน้ำ"] }),
+      manualTradeItem({ id: "bathroom_accessory", code: "J04", name: "อุปกรณ์ประกอบห้องน้ำ", unit: "ชุด", hint: "กระจก ราวแขวน ที่ใส่กระดาษ และอุปกรณ์อื่น", keywords: ["อุปกรณ์ห้องน้ำ"] }),
+    ],
+  },
+  {
+    id: "architectural_opening", code: "K", title: "งานประตูหน้าต่าง", discipline: "architecture",
+    items: [
+      manualTradeItem({ id: "solid_door", code: "K01", name: "ประตูบานทึบพร้อมวงกบและอุปกรณ์", unit: "ชุด", hint: "จำนวนชุดประตูพร้อม Hardware", keywords: ["ประตู", "วงกบ"] }),
+      manualTradeItem({ id: "aluminium_door", code: "K02", name: "ประตูอะลูมิเนียมและกระจก", unit: "ตร.ม.", hint: "พื้นที่กรอบและกระจกรวม", keywords: ["อะลูมิเนียม", "กระจก", "ประตู"] }),
+      manualTradeItem({ id: "aluminium_window", code: "K03", name: "หน้าต่างอะลูมิเนียมและกระจก", unit: "ตร.ม.", hint: "พื้นที่ช่องหน้าต่างรวมกรอบ", keywords: ["อะลูมิเนียม", "กระจก", "หน้าต่าง"] }),
+      manualTradeItem({ id: "door_hardware", code: "K04", name: "อุปกรณ์ประตูและหน้าต่างเพิ่มเติม", unit: "ชุด", hint: "ลูกบิด กุญแจ บานพับ มือจับ และอุปกรณ์พิเศษ", keywords: ["บานพับ", "ลูกบิด", "มือจับ"] }),
+    ],
+  },
+  {
+    id: "architectural_paint", code: "L", title: "งานสี", discipline: "architecture",
+    items: [
+      manualTradeItem({ id: "internal_paint", code: "L01", name: "สีผนังและฝ้าภายใน", unit: "ตร.ม.", hint: "พื้นที่ทาสีรวมรองพื้นและสีทับหน้า", keywords: ["สีทาภายใน", "สีรองพื้น", "สี"] }),
+      manualTradeItem({ id: "external_paint", code: "L02", name: "สีผนังภายนอก", unit: "ตร.ม.", hint: "พื้นที่ทาสีภายนอกรวมรองพื้น", keywords: ["สีทาภายนอก", "สีรองพื้น", "สี"] }),
+      manualTradeItem({ id: "steel_wood_paint", code: "L03", name: "สีงานเหล็กและงานไม้", unit: "ตร.ม.", hint: "พื้นที่ผิวที่ต้องทาสีหรือเคลือบ", keywords: ["สีรองพื้นกันสนิม", "สีน้ำมัน", "สี"] }),
+    ],
+  },
+  {
+    id: "architectural_other", code: "M", title: "งานตกแต่งทางสถาปัตยกรรมอื่นๆ", discipline: "architecture",
+    items: [
+      manualTradeItem({ id: "built_in", code: "M01", name: "งานบิลต์อินและเคาน์เตอร์", unit: "ม.", hint: "ความยาวหรือปริมาณตามแบบตกแต่ง", keywords: ["ไม้อัด", "ลามิเนต"] }),
+      manualTradeItem({ id: "handrail", code: "M02", name: "ราวกันตกและราวบันได", unit: "ม.", hint: "ความยาวราวรวมทั้งหมด", keywords: ["ราวกันตก", "สแตนเลส", "เหล็ก"] }),
+      manualTradeItem({ id: "architectural_misc", code: "M03", name: "งานตกแต่งและงานสถาปัตยกรรมอื่น", unit: "งาน", hint: "กรอกจำนวนงานและกำหนดราคาวัสดุ/ค่าแรงเอง", keywords: [] }),
+    ],
+  },
+  {
+    id: "system_electrical", code: "N", title: "งานไฟฟ้า", discipline: "system",
+    items: [
+      manualTradeItem({ id: "lighting_point", code: "N01", name: "จุดแสงสว่างและการเดินสาย", unit: "จุด", hint: "จำนวนจุดตามแบบไฟฟ้า", keywords: ["สายไฟ", "ท่อร้อยสาย"] }),
+      manualTradeItem({ id: "socket_point", code: "N02", name: "จุดเต้ารับและการเดินสาย", unit: "จุด", hint: "จำนวนจุดเต้ารับทั้งหมด", keywords: ["เต้ารับ", "สายไฟ", "ท่อร้อยสาย"] }),
+      manualTradeItem({ id: "switch_point", code: "N03", name: "สวิตช์และอุปกรณ์ควบคุม", unit: "จุด", hint: "จำนวนจุดสวิตช์และอุปกรณ์ควบคุม", keywords: ["สวิตช์", "สายไฟ"] }),
+      manualTradeItem({ id: "consumer_unit", code: "N04", name: "ตู้ไฟฟ้า MDB/Consumer Unit", unit: "ชุด", hint: "จำนวนตู้พร้อมอุปกรณ์ป้องกัน", keywords: ["ตู้ไฟ", "เซอร์กิตเบรกเกอร์"] }),
+      manualTradeItem({ id: "main_cable", code: "N05", name: "สายเมนและสายป้อน", unit: "ม.", hint: "ความยาวสายตามแบบและขนาดสาย", keywords: ["สายไฟ", "สายเคเบิล"] }),
+      manualTradeItem({ id: "grounding_system", code: "N06", name: "ระบบสายดินและหลักดิน", unit: "ชุด", hint: "จำนวนชุดระบบสายดิน", keywords: ["สายดิน", "หลักดิน"] }),
+      manualTradeItem({ id: "light_fixture", code: "N07", name: "โคมไฟและอุปกรณ์ประกอบ", unit: "ชุด", hint: "จำนวนโคมตามประเภท", keywords: ["โคมไฟ", "หลอดไฟ"] }),
+    ],
+  },
+  {
+    id: "system_plumbing", code: "O", title: "งานประปา", discipline: "system",
+    items: [
+      manualTradeItem({ id: "water_supply_pipe", code: "O01", name: "ท่อน้ำดีพร้อมข้อต่อ", unit: "ม.", hint: "ความยาวแยกตามชนิดและขนาดท่อ", keywords: ["ท่อน้ำดี", "ท่อพีวีซี", "ท่อ"] }),
+      manualTradeItem({ id: "water_valve", code: "O02", name: "วาล์วและอุปกรณ์ควบคุมน้ำ", unit: "ชุด", hint: "จำนวนวาล์วและอุปกรณ์", keywords: ["วาล์ว", "ประตูน้ำ"] }),
+      manualTradeItem({ id: "water_pump", code: "O03", name: "ปั๊มน้ำพร้อมอุปกรณ์ติดตั้ง", unit: "ชุด", hint: "จำนวนชุดปั๊มน้ำตามกำลังและสเปก", keywords: ["ปั๊มน้ำ"] }),
+      manualTradeItem({ id: "water_tank", code: "O04", name: "ถังเก็บน้ำพร้อมฐานและอุปกรณ์", unit: "ใบ", hint: "จำนวนและความจุถังเก็บน้ำ", keywords: ["ถังเก็บน้ำ", "ถังน้ำ"] }),
+    ],
+  },
+  {
+    id: "system_sanitary", code: "P", title: "งานสุขาภิบาลและระบายน้ำ", discipline: "system",
+    items: [
+      manualTradeItem({ id: "waste_pipe", code: "P01", name: "ท่อน้ำทิ้งพร้อมข้อต่อ", unit: "ม.", hint: "ความยาวแยกตามชนิดและขนาดท่อ", keywords: ["ท่อน้ำทิ้ง", "ท่อพีวีซี", "ท่อ"] }),
+      manualTradeItem({ id: "soil_pipe", code: "P02", name: "ท่อโสโครกและท่ออากาศ", unit: "ม.", hint: "ความยาวท่อรวมตามแบบสุขาภิบาล", keywords: ["ท่อโสโครก", "ท่อพีวีซี", "ท่อ"] }),
+      manualTradeItem({ id: "floor_drain", code: "P03", name: "ตะแกรงรับน้ำและ Floor Drain", unit: "จุด", hint: "จำนวนจุดระบายน้ำ", keywords: ["ตะแกรงระบายน้ำ", "ฟลอร์เดรน"] }),
+      manualTradeItem({ id: "inspection_chamber", code: "P04", name: "บ่อพักและบ่อระบายน้ำ", unit: "บ่อ", hint: "จำนวนบ่อตามแบบและขนาด", keywords: ["บ่อพัก", "ฝาบ่อ"] }),
+      manualTradeItem({ id: "treatment_tank", code: "P05", name: "ถังบำบัดน้ำเสีย/บ่อเกรอะ", unit: "ชุด", hint: "จำนวนชุดและความจุตามแบบ", keywords: ["ถังบำบัด", "ถังบำบัดน้ำเสีย"] }),
+      manualTradeItem({ id: "drainage_channel", code: "P06", name: "รางระบายน้ำและงานระบายน้ำภายนอก", unit: "ม.", hint: "ความยาวรางระบายน้ำรวม", keywords: ["รางระบายน้ำ", "ท่อระบายน้ำ"] }),
     ],
   },
 ];
 
-const ALL_ITEMS = BOQ_SECTIONS.flatMap((section) => section.items.map((item) => ({ ...item, sectionId: section.id, sectionTitle: section.title })));
+const ALL_ITEMS = BOQ_SECTIONS.flatMap((section) => section.items.map((item) => ({
+  ...item,
+  sectionId: section.id,
+  sectionTitle: section.title,
+  discipline: section.discipline,
+  disciplineTitle: BOQ_DISCIPLINES[section.discipline],
+})));
+const REBAR_RESOURCE_KEYS = new Set(["rebar", "binding_wire", "rebar_labor"]);
+const EXPORT_CATEGORIES = [
+  { discipline: "structure", title: "งานดิน" },
+  { discipline: "structure", title: "งานเสาเข็มและฐานราก" },
+  { discipline: "structure", title: "งานคอนกรีตและแบบหล่อ" },
+  { discipline: "structure", title: "งานเหล็กเสริม" },
+  { discipline: "structure", title: "งานแผ่นพื้นสำเร็จรูป" },
+  { discipline: "structure", title: "งานเหล็กรูปพรรณ" },
+  { discipline: "architecture", title: "งานหลังคาและวัสดุหลังคา" },
+  { discipline: "architecture", title: "งานผนังก่อและฉาบ" },
+  { discipline: "architecture", title: "งานฝ้าเพดาน" },
+  { discipline: "architecture", title: "งานผิวตกแต่งพื้นและผนัง" },
+  { discipline: "architecture", title: "งานสุขภัณฑ์" },
+  { discipline: "architecture", title: "งานประตูหน้าต่าง" },
+  { discipline: "architecture", title: "งานสี" },
+  { discipline: "architecture", title: "งานตกแต่งทางสถาปัตยกรรมอื่นๆ" },
+  { discipline: "system", title: "งานไฟฟ้า" },
+  { discipline: "system", title: "งานประปา" },
+  { discipline: "system", title: "งานสุขาภิบาลและระบายน้ำ" },
+];
+
+function exportCategoryFor(item, resource) {
+  if (item.discipline !== "structure") return item.sectionTitle;
+  if (item.sectionId === "earthwork") return "งานดิน";
+  if (item.sectionId === "precast") return "งานแผ่นพื้นสำเร็จรูป";
+  if (item.sectionId === "structural_steel") return "งานเหล็กรูปพรรณ";
+  if (item.sectionId === "foundation") return "งานเสาเข็มและฐานราก";
+  if (REBAR_RESOURCE_KEYS.has(resource.key)) return "งานเหล็กเสริม";
+  if (item.sectionId === "superstructure") return "งานคอนกรีตและแบบหล่อ";
+  return item.sectionTitle;
+}
 const SAMPLE_QUANTITIES = { site_clearance: 180, excavation: 42, sand_fill: 28, stone_fill: 12, lean_concrete: 2.8, concrete_pile: 216, footing: 12.5, pile_cap: 7.2, pedestal: 2.4, ground_beam: 16.8, column: 13.5, beam: 25.8, slab_ground: 18, slab_suspended: 21, stair: 4.2, lintel_canopy: 3.4, roof_steel: 2850 };
 const SAMPLE_EXACT_TAKEOFF = {
   footing: { concrete: 12.5, rebar: 1188, formwork: 69 },
@@ -369,7 +537,7 @@ function calculateItem({
       : null;
     const resourceKey = `${item.id}:${resource.key}`;
     const hasCurrentOverride = hasOwn(currentRateOverrides, resource.key);
-    const hasFutureOverride = hasOwn(futureRateOverrides, resource.key);
+    const hasFutureOverride = resource.type === "material" && hasOwn(futureRateOverrides, resource.key);
     const currentUnitPrice = hasCurrentOverride
       ? number(currentRateOverrides[resource.key])
       : resource.type === "material"
@@ -458,6 +626,7 @@ function applyMarkup(base, rates) {
 
 export default function CostPlanner() {
   const [initialDraft] = useState(loadDraft);
+  const [priceMode, setPriceMode] = useState(initialDraft.priceMode === "future" ? "future" : "current");
   const [takeoffMode, setTakeoffMode] = useState(initialDraft.takeoffMode || "professional");
   const [quantities, setQuantities] = useState(initialDraft.quantities || {});
   const [exactTakeoff, setExactTakeoff] = useState(initialDraft.exactTakeoff || {});
@@ -466,6 +635,7 @@ export default function CostPlanner() {
   const [currentRateOverrides, setCurrentRateOverrides] = useState(initialDraft.currentRateOverrides || {});
   const [futureRateOverrides, setFutureRateOverrides] = useState(initialDraft.futureRateOverrides || {});
   const [wasteOverrides, setWasteOverrides] = useState(initialDraft.wasteOverrides || {});
+  const [itemNotes, setItemNotes] = useState(initialDraft.itemNotes || {});
   const [expandedRows, setExpandedRows] = useState(new Set());
   const [collapsedSections, setCollapsedSections] = useState(new Set());
   const [showAssumptions, setShowAssumptions] = useState(false);
@@ -481,12 +651,15 @@ export default function CostPlanner() {
   });
   const [savedAt, setSavedAt] = useState(initialDraft.savedAt || "");
 
-  const forecastMonths = Math.round(number(forecastValue) * (forecastUnit === "year" ? 12 : 1));
+  const requestedForecastMonths = Math.max(1, Math.round(number(forecastValue) * (forecastUnit === "year" ? 12 : 1)));
+  const forecastMonths = priceMode === "future" ? requestedForecastMonths : 0;
   const forecastLabel = formatForecastPeriod(forecastMonths);
   const comparisonLabel = forecastMonths > 0 ? `อีก ${forecastLabel}` : "ราคาปัจจุบัน";
   const comparisonPriceLabel = forecastMonths > 0 ? `ราคาอีก ${forecastLabel}` : "ราคาปัจจุบัน";
   const targetDateLabel = forecastDate(forecastMonths);
   const todayLabel = new Date().toLocaleDateString("th-TH", { day: "numeric", month: "long", year: "numeric" });
+  const selectedPriceLabel = priceMode === "future" ? `ราคาคาดการณ์ในอีก ${forecastLabel}` : "ราคาปัจจุบัน";
+  const selectedDateLabel = priceMode === "future" ? targetDateLabel : todayLabel;
 
   const calculatedItems = useMemo(
     () => ALL_ITEMS.map((item) => calculateItem({
@@ -513,6 +686,9 @@ export default function CostPlanner() {
     ? activeItems.reduce((sum, item) => sum + (item.futureTotal || 0), 0)
     : null;
   const futureSummary = futureDirect === null ? null : applyMarkup(futureDirect, rates);
+  const selectedSummary = priceMode === "future" ? futureSummary : currentSummary;
+  const selectedComplete = priceMode === "future" ? futureComplete : currentComplete;
+  const selectedDirect = priceMode === "future" ? futureDirect : currentDirect;
   const difference = futureSummary ? futureSummary.grandTotal - currentSummary.grandTotal : null;
   const differencePercent = difference !== null && currentSummary.grandTotal > 0
     ? (difference / currentSummary.grandTotal) * 100
@@ -530,9 +706,12 @@ export default function CostPlanner() {
 
   const totalsByType = useMemo(() => {
     const totals = { material: 0, labor: 0, equipment: 0 };
-    calculatedItems.forEach((item) => item.resources.forEach((resource) => { totals[resource.type] += resource.currentTotal; }));
+    calculatedItems.forEach((item) => item.resources.forEach((resource) => {
+      const value = priceMode === "future" ? resource.futureTotal : resource.currentTotal;
+      if (value !== null && value !== undefined) totals[resource.type] += value;
+    }));
     return totals;
-  }, [calculatedItems]);
+  }, [calculatedItems, priceMode]);
 
   const updateQuantity = (id, value) => setQuantities((current) => ({ ...current, [id]: value === "" ? "" : number(value) }));
   const updateExactTakeoff = (id, key, value) => {
@@ -589,6 +768,7 @@ export default function CostPlanner() {
     setCurrentRateOverrides({});
     setFutureRateOverrides({});
     setWasteOverrides({});
+    setItemNotes({});
     setExpandedRows(new Set());
   };
   const saveDraft = () => {
@@ -603,6 +783,8 @@ export default function CostPlanner() {
       currentRateOverrides,
       futureRateOverrides,
       wasteOverrides,
+      itemNotes,
+      priceMode,
       forecastValue,
       forecastUnit,
       project,
@@ -614,66 +796,237 @@ export default function CostPlanner() {
   };
 
   const exportBOQ = () => {
-    const rows = [
-      ["BOQ งานโครงสร้างอาคาร"], ["ชื่อโครงการ", project.name], ["เจ้าของโครงการ", project.owner], ["สถานที่", project.location], ["วิธีคำนวณปริมาณ", takeoffMode === "professional" ? "กรอกจากแบบก่อสร้าง - ปริมาณตรวจสอบแล้ว" : "ประมาณงบเบื้องต้น - ใช้สัมประสิทธิ์"], ["ฐานราคา", "ราคาปัจจุบัน"], ["ระยะวางแผน", forecastLabel], ["เดือนเป้าหมายโดยประมาณ", targetDateLabel], [],
-      ["แหล่งราคาวัสดุ", OFFICIAL_PRICE_URL],
-      ["หมวด", "รหัส", "รายการงาน", "ปริมาณฐาน", "หน่วยฐาน", "คอนกรีตจากแบบ (ลบ.ม.)", "เหล็กจากแบบ (กก.)", "แบบหล่อจากแบบ (ตร.ม.)", "ประเภทราคา", "รายการวัสดุ/แรงงาน/เครื่องจักร", "แหล่งราคาปัจจุบัน", "เผื่อสูญเสีย (%)", "ปริมาณคิดราคา", "หน่วย", "ราคาปัจจุบัน/หน่วย", `${comparisonPriceLabel}/หน่วย`, "รวมราคาปัจจุบัน", `รวม${comparisonLabel}`],
+    const showFuture = priceMode === "future";
+    const columnCount = showFuture ? 21 : 18;
+    const blankRow = () => Array(columnCount).fill("");
+    const formatSource = (resource, future = false) => {
+      const source = future ? resource.futureRateSource : resource.currentRateSource;
+      if (source === "official") return "ราคากลางวัสดุภาครัฐ";
+      if (source === "model") return "ML จากข้อมูลราคาวัสดุ";
+      if (source === "manual") return "ผู้ใช้กำหนด/ใบเสนอราคา";
+      if (source === "current") return "คงอัตราปัจจุบัน (ไม่ใช่ ML)";
+      return "ยังไม่ระบุ";
+    };
+    const makeDetailRow = ({
+      sequence = "", discipline = "", section = "", code = "", name = "",
+      workQty = "", workUnit = "", materialQty = "", materialUnit = "",
+      materialRate = "", materialTotal = "", laborQty = "", laborUnit = "",
+      laborRate = "", laborTotal = "", currentTotal = "", futureMaterialRate = "",
+      futureMaterialTotal = "", futureTotal = "", source = "", note = "",
+    }) => [
+      sequence, discipline, section, code, name, workQty, workUnit,
+      materialQty, materialUnit, materialRate, materialTotal,
+      laborQty, laborUnit, laborRate, laborTotal, currentTotal,
+      ...(showFuture ? [futureMaterialRate, futureMaterialTotal, futureTotal] : []),
+      source, note,
     ];
-    activeItems.forEach((item) => {
-      const exact = exactTakeoff[item.id] || {};
-      item.resources.forEach((resource) => rows.push([
-        item.sectionTitle,
-        item.code,
-        item.name,
-        item.qty,
-        item.unit,
-        exact.concrete ?? "",
-        exact.rebar ?? "",
-        exact.formwork ?? "",
-        COST_TYPES[resource.type],
-        resource.catalogMaterial ? materialName(resource.catalogMaterial) : resource.name,
-        resource.currentRateSource === "official" ? "ราคาวัสดุภาครัฐ" : resource.currentRateSource === "manual" ? "ผู้ใช้กำหนด/ใบเสนอราคา" : "ยังไม่ระบุ",
-        resource.wastePct,
-        resource.calculatedQty,
-        resource.unit,
-        resource.rateMissing ? "" : resource.currentUnitPrice,
-        resource.futureUnitPrice ?? "",
-        resource.rateMissing ? "" : resource.currentTotal,
-        resource.futureTotal ?? "",
-      ]));
+    const makeTotalRow = (label, currentValue, futureValue = "") => {
+      const row = blankRow();
+      row[4] = label;
+      row[15] = currentValue;
+      if (showFuture) row[18] = futureValue;
+      return row;
+    };
+    const rows = [
+      ["บัญชีรายการก่อสร้าง (BOQ)"],
+      ["ชื่อโครงการ", project.name],
+      ["เจ้าของโครงการ", project.owner],
+      ["สถานที่", project.location],
+      ["วิธีคำนวณปริมาณ", takeoffMode === "professional" ? "กรอกจากแบบก่อสร้าง - ปริมาณตรวจสอบแล้ว" : "ประมาณงบเบื้องต้น - ใช้สัมประสิทธิ์"],
+      ["ฐานราคาที่เลือก", selectedPriceLabel],
+      ["วันที่/เดือนเป้าหมาย", selectedDateLabel],
+      ...(priceMode === "future" ? [["ระยะวางแผน", forecastLabel]] : []),
+      ["แหล่งราคาวัสดุ", OFFICIAL_PRICE_URL],
+      ["คำเตือนสำคัญ", OFFICIAL_PRICE_NOTE],
+      ["ขอบเขต ML", "ระบบพยากรณ์เฉพาะราคาวัสดุก่อสร้าง ค่าแรงและเครื่องจักรคงอัตราปัจจุบันหรือใช้ค่าที่ผู้ใช้กรอก ไม่ใช่ผลพยากรณ์จาก ML"],
+      ["หมายเหตุรูปแบบ", "CSV ไม่รองรับการรวมเซลล์ เส้นตาราง หรือสีเหมือนไฟล์ Excel แต่จัดลำดับคอลัมน์ตามรูปแบบ BOQ มาตรฐาน"],
+      [],
+      [
+        "ลำดับ", "หมวดหลัก", "หมวดงาน", "รหัส", "รายการ", "ปริมาณงาน", "",
+        "วัสดุ", "", "", "", "แรงงาน/เครื่องจักร", "", "", "", "รวมปัจจุบัน",
+        ...(showFuture ? ["วัสดุอนาคต (ML/ผู้ใช้กำหนด)", "", "รวมอนาคต"] : []),
+        "แหล่งราคา", "หมายเหตุ",
+      ],
+      [
+        "", "", "", "", "", "จำนวน", "หน่วย",
+        "จำนวน", "หน่วย", "บาท/หน่วย", "รวม",
+        "จำนวน", "หน่วย", "บาท/หน่วย", "รวม", "วัสดุ+แรงงาน/เครื่องจักร",
+        ...(showFuture ? ["บาท/หน่วย", "รวมวัสดุ", "วัสดุคาดการณ์+ค่าแรง/เครื่องจักรเดิม"] : []),
+        "", "",
+      ],
+    ];
+
+    let sequence = 0;
+    Object.entries(BOQ_DISCIPLINES).forEach(([disciplineKey, disciplineTitle]) => {
+      const disciplineItems = activeItems.filter((item) => item.discipline === disciplineKey);
+      if (!disciplineItems.length) return;
+
+      const disciplineHeader = blankRow();
+      disciplineHeader[1] = disciplineTitle;
+      disciplineHeader[4] = `รายละเอียด${disciplineTitle}`;
+      rows.push([], disciplineHeader);
+
+      EXPORT_CATEGORIES.filter((category) => category.discipline === disciplineKey).forEach((category) => {
+        const categoryItems = disciplineItems
+          .map((item) => ({
+            item,
+            resources: item.resources.filter((resource) => resource.calculatedQty > 0 && exportCategoryFor(item, resource) === category.title),
+          }))
+          .filter((entry) => entry.resources.length > 0);
+        if (!categoryItems.length) return;
+
+        const categoryHeader = blankRow();
+        categoryHeader[2] = category.title;
+        categoryHeader[4] = category.title;
+        rows.push(categoryHeader);
+
+        categoryItems.forEach(({ item, resources }) => {
+          sequence += 1;
+          const materialResources = resources.filter((resource) => resource.type === "material");
+          const laborResources = resources.filter((resource) => resource.type !== "material");
+          const materialCurrent = materialResources.reduce((sum, resource) => sum + resource.currentTotal, 0);
+          const laborCurrent = laborResources.reduce((sum, resource) => sum + resource.currentTotal, 0);
+          const categoryFutureComplete = resources.every((resource) => !resource.futurePriceMissing);
+          const materialFutureComplete = materialResources.every((resource) => !resource.futurePriceMissing);
+          const materialFuture = materialFutureComplete
+            ? materialResources.reduce((sum, resource) => sum + (resource.futureTotal || 0), 0)
+            : "";
+          const exact = exactTakeoff[item.id] || {};
+          const isExactConcrete = takeoffMode === "professional" && isReinforcedConcreteItem(item);
+          const workQty = isExactConcrete
+            ? category.title === "งานเหล็กเสริม" ? (exact.rebar ?? "") : (exact.concrete ?? "")
+            : item.qty;
+          const workUnit = isExactConcrete
+            ? category.title === "งานเหล็กเสริม" ? "กก. (เหล็กจากแบบ/BBS)" : "ลบ.ม. (คอนกรีตจากแบบ)"
+            : item.unit;
+          const categoryCurrent = resources.reduce((sum, resource) => sum + resource.currentTotal, 0);
+          const categoryFuture = categoryFutureComplete
+            ? resources.reduce((sum, resource) => sum + (resource.futureTotal || 0), 0)
+            : "";
+
+          rows.push(makeDetailRow({
+            sequence,
+            discipline: disciplineTitle,
+            section: category.title,
+            code: item.code,
+            name: item.name,
+            workQty,
+            workUnit,
+            materialTotal: materialCurrent || "",
+            laborTotal: laborCurrent || "",
+            currentTotal: categoryCurrent,
+            futureMaterialTotal: materialFuture,
+            futureTotal: categoryFuture,
+            source: "สรุปจากรายละเอียดทรัพยากรด้านล่าง",
+            note: itemNotes[item.id] || "",
+          }));
+
+          resources.forEach((resource, resourceIndex) => {
+            const isMaterial = resource.type === "material";
+            const resourceDisplayName = resource.catalogMaterial
+              ? materialName(resource.catalogMaterial)
+              : resource.name;
+            rows.push(makeDetailRow({
+              sequence: `${sequence}.${resourceIndex + 1}`,
+              discipline: disciplineTitle,
+              section: category.title,
+              code: item.code,
+              name: `↳ ${resourceDisplayName}`,
+              materialQty: isMaterial ? resource.calculatedQty : "",
+              materialUnit: isMaterial ? resource.unit : "",
+              materialRate: isMaterial && !resource.rateMissing ? resource.currentUnitPrice : "",
+              materialTotal: isMaterial && !resource.rateMissing ? resource.currentTotal : "",
+              laborQty: !isMaterial ? resource.calculatedQty : "",
+              laborUnit: !isMaterial ? resource.unit : "",
+              laborRate: !isMaterial && !resource.rateMissing ? resource.currentUnitPrice : "",
+              laborTotal: !isMaterial && !resource.rateMissing ? resource.currentTotal : "",
+              currentTotal: resource.rateMissing ? "" : resource.currentTotal,
+              futureMaterialRate: isMaterial ? (resource.futureUnitPrice ?? "") : "",
+              futureMaterialTotal: isMaterial ? (resource.futureTotal ?? "") : "",
+              futureTotal: resource.futureTotal ?? "",
+              source: showFuture && isMaterial ? `${formatSource(resource)} → ${formatSource(resource, true)}` : formatSource(resource),
+              note: isMaterial
+                ? `เผื่อสูญเสีย ${formatQty(resource.wastePct)}%${resource.currentRateSource === "official" ? " • ราคากลางภาครัฐ ไม่ใช่ราคาขายปลีก" : ""}`
+                : "ค่าแรง/เครื่องจักรเป็นค่าที่ผู้ใช้กรอกและไม่ถูกพยากรณ์ด้วย ML",
+            }));
+          });
+        });
+
+        const categoryResources = categoryItems.flatMap((entry) => entry.resources);
+        const categoryMaterialCurrent = categoryResources.filter((resource) => resource.type === "material").reduce((sum, resource) => sum + resource.currentTotal, 0);
+        const categoryLaborCurrent = categoryResources.filter((resource) => resource.type !== "material").reduce((sum, resource) => sum + resource.currentTotal, 0);
+        const categoryCurrent = categoryResources.reduce((sum, resource) => sum + resource.currentTotal, 0);
+        const categoryFutureComplete = categoryResources.every((resource) => !resource.futurePriceMissing);
+        const categoryFutureMaterial = categoryFutureComplete
+          ? categoryResources.filter((resource) => resource.type === "material").reduce((sum, resource) => sum + (resource.futureTotal || 0), 0)
+          : "";
+        const categoryFuture = categoryFutureComplete ? categoryResources.reduce((sum, resource) => sum + (resource.futureTotal || 0), 0) : "";
+        rows.push(makeDetailRow({
+          name: `รวม${category.title}`,
+          materialTotal: categoryMaterialCurrent,
+          laborTotal: categoryLaborCurrent,
+          currentTotal: categoryCurrent,
+          futureMaterialTotal: categoryFutureMaterial,
+          futureTotal: categoryFuture,
+          note: "ยอดรวมหมวดงาน",
+        }));
+      });
+
+      const disciplineMaterial = disciplineItems.reduce((sum, item) => sum + item.resources.filter((resource) => resource.type === "material").reduce((resourceSum, resource) => resourceSum + resource.currentTotal, 0), 0);
+      const disciplineLabor = disciplineItems.reduce((sum, item) => sum + item.resources.filter((resource) => resource.type !== "material").reduce((resourceSum, resource) => resourceSum + resource.currentTotal, 0), 0);
+      const disciplineCurrent = disciplineItems.reduce((sum, item) => sum + item.currentTotal, 0);
+      const disciplineFutureComplete = disciplineItems.every((item) => item.futureComplete);
+      const disciplineFutureMaterial = disciplineFutureComplete
+        ? disciplineItems.reduce((sum, item) => sum + item.resources.filter((resource) => resource.type === "material").reduce((resourceSum, resource) => resourceSum + (resource.futureTotal || 0), 0), 0)
+        : "";
+      const disciplineFuture = disciplineFutureComplete ? disciplineItems.reduce((sum, item) => sum + (item.futureTotal || 0), 0) : "";
+      rows.push(makeDetailRow({
+        discipline: disciplineTitle,
+        name: `รวม${disciplineTitle}`,
+        materialTotal: disciplineMaterial,
+        laborTotal: disciplineLabor,
+        currentTotal: disciplineCurrent,
+        futureMaterialTotal: disciplineFutureMaterial,
+        futureTotal: disciplineFuture,
+        note: "ยอดรวมหมวดหลัก",
+      }));
     });
+
     rows.push(
       [],
       ["สถานะราคาปัจจุบัน", currentComplete ? "ครบพร้อมใช้งาน" : `ยังขาดอัตราราคา ${missingCurrentRates.length} ประเภท`],
-      ["สถานะราคาคาดการณ์", futureComplete ? "ครบพร้อมเปรียบเทียบ" : `รอข้อมูล ML/ราคาเป้าหมาย ${missingForecastRates.length} ประเภท`],
-      ["สรุป", "ต้นทุนตรง", currentSummary.base, futureSummary?.base ?? ""],
-      ["สรุป", `ค่าอำนวยการ ${rates.overhead}%`, currentSummary.overhead, futureSummary?.overhead ?? ""],
-      ["สรุป", `กำไร ${rates.profit}%`, currentSummary.profit, futureSummary?.profit ?? ""],
-      ["สรุป", `เงินสำรอง ${rates.contingency}%`, currentSummary.contingency, futureSummary?.contingency ?? ""],
-      ["สรุป", `VAT ${rates.vat}%`, currentSummary.vat, futureSummary?.vat ?? ""],
-      ["สรุป", "รวมทั้งโครงการ", currentSummary.grandTotal, futureSummary?.grandTotal ?? ""]
+      ...(priceMode === "future" ? [["สถานะราคาคาดการณ์", futureComplete ? "ครบพร้อมเปรียบเทียบ" : `รอข้อมูล ML/ราคาเป้าหมาย ${missingForecastRates.length} ประเภท`]] : []),
+      makeTotalRow("รวมต้นทุนตรง", currentSummary.base, futureSummary?.base ?? ""),
+      makeTotalRow(`ค่าอำนวยการ ${rates.overhead}%`, currentSummary.overhead, futureSummary?.overhead ?? ""),
+      makeTotalRow(`กำไรผู้รับเหมา ${rates.profit}%`, currentSummary.profit, futureSummary?.profit ?? ""),
+      makeTotalRow(`เงินสำรอง ${rates.contingency}%`, currentSummary.contingency, futureSummary?.contingency ?? ""),
+      makeTotalRow(`VAT ${rates.vat}%`, currentSummary.vat, futureSummary?.vat ?? ""),
+      makeTotalRow("รวมทั้งโครงการ", currentSummary.grandTotal, futureSummary?.grandTotal ?? ""),
+      [],
+      ["คำเตือนท้ายเอกสาร", OFFICIAL_PRICE_NOTE]
     );
     const csv = rows.map((row) => row.map(escapeCSV).join(",")).join("\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `structural-boq-current-vs-${forecastMonths}m.csv`;
+    link.download = priceMode === "future" ? `boq-all-works-forecast-${forecastMonths}m.csv` : "boq-all-works-current.csv";
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   };
 
-  const riskLevel = differencePercent === null ? "รอข้อมูล ML" : differencePercent >= 8 ? "สูง" : differencePercent >= 4 ? "ปานกลาง" : "ต่ำ";
+  const selectedMissingRates = priceMode === "future" ? missingForecastRates : missingCurrentRates;
+  const riskLevel = priceMode === "current" ? "ไม่ใช้การคาดการณ์" : differencePercent === null ? "รอข้อมูล ML" : differencePercent >= 8 ? "สูง" : differencePercent >= 4 ? "ปานกลาง" : "ต่ำ";
 
   return (
     <>
       <style>{BOQ_STYLES}</style>
       <PageHeader
-        eyebrow="THAI เท • STRUCTURAL BOQ"
-        title="ประมาณราคางานโครงสร้าง"
-        description="เริ่มจากปริมาณงาน แล้วตรวจราคาวัสดุ ค่าแรง และเครื่องจักรก่อนออก BOQ"
+        eyebrow="THAI เท • CONSTRUCTION BOQ"
+        title="ประมาณราคาและจัดทำ BOQ งานก่อสร้าง"
+        description="ครอบคลุมงานโครงสร้าง งานสถาปัตย์ และงานระบบ พร้อมแยกค่าวัสดุ ค่าแรง และเครื่องจักร"
         action={
           <div className="boq-header-actions">
             <button className="outline-btn" onClick={saveDraft}><Save size={16} /> บันทึก</button>
@@ -690,12 +1043,14 @@ export default function CostPlanner() {
         <div><b>3</b><span>ตรวจราคาและสรุป</span></div>
       </nav>
 
-      <div className="boq-notice">
-        <Info size={18} />
-        <span>
-          ราคาวัสดุใช้ข้อมูลจากสำนักงานนโยบายและยุทธศาสตร์การค้า หรือเปลี่ยนเป็นราคาใบเสนอราคาของร้านค้าได้
-          {" "}<a href={OFFICIAL_PRICE_URL} target="_blank" rel="noreferrer">ดูแหล่งราคา</a>
-        </span>
+      <div className="boq-notice" role="note" aria-label="คำเตือนเกี่ยวกับราคาวัสดุ">
+        <AlertTriangle size={19} />
+        <div>
+          <strong>ราคานี้ไม่ใช่ราคาขายปลีกหรือราคาซื้อจริง</strong>
+          <span>{OFFICIAL_PRICE_NOTE}</span>
+          <span className="boq-ml-scope"><b>ขอบเขต ML:</b> พยากรณ์เฉพาะราคาวัสดุก่อสร้าง ค่าแรงและเครื่องจักรใช้ค่าปัจจุบันหรือค่าที่ผู้ใช้กรอกเอง</span>
+          <a href={OFFICIAL_PRICE_URL} target="_blank" rel="noreferrer">ดูแหล่งราคาภาครัฐ</a>
+        </div>
       </div>
 
       <section className="card boq-project-card">
@@ -731,8 +1086,8 @@ export default function CostPlanner() {
         <div className={`boq-mode-explainer ${takeoffMode === "quick" ? "estimate" : "exact"}`}>
           {takeoffMode === "professional" ? <CheckCircle2 size={17} /> : <AlertTriangle size={17} />}
           <span>{takeoffMode === "professional"
-            ? "ระบบใช้ปริมาณที่กรอกโดยตรง ไม่คำนวณเหล็กหรือแบบหล่อแทนคุณ เหมาะกับรายการที่ถอดจากแบบหรือ BBS แล้ว"
-            : "ระบบประมาณเหล็กและแบบหล่อด้วยสัมประสิทธิ์ต่อปริมาตรคอนกรีต ใช้ตั้งงบคร่าว ๆ เท่านั้น ก่อนเสนอราคาต้องตรวจจากแบบอีกครั้ง"}</span>
+            ? "ระบบใช้ปริมาณที่กรอกโดยตรง งาน ค.ส.ล. กรอกคอนกรีต เหล็ก และแบบหล่อจากแบบ/BBS ส่วนงานสถาปัตย์และงานระบบกรอกปริมาณของแต่ละรายการเอง"
+            : "เฉพาะงาน ค.ส.ล. ระบบจะประมาณเหล็กและแบบหล่อด้วยสัมประสิทธิ์ ส่วนงานสถาปัตย์และงานระบบยังต้องกรอกปริมาณเอง ก่อนเสนอราคาต้องตรวจจากแบบอีกครั้ง"}</span>
         </div>
 
         <button type="button" className="boq-settings-btn" onClick={() => setShowAssumptions((value) => !value)} aria-expanded={showAssumptions}>
@@ -751,9 +1106,9 @@ export default function CostPlanner() {
         <div className="boq-planning-panel">
           <div className="boq-planning-head">
             <div>
-              <div className="field-label">วางแผนเริ่มก่อสร้าง</div>
-              <strong>ต้องการเปรียบเทียบราคาในอีกนานเท่าไร?</strong>
-              <p>กำหนดได้เองทั้งเดือนและปี เช่น 6 เดือน หรือ 5 ปี</p>
+              <div className="field-label">ฐานราคาที่ใช้ประเมิน</div>
+              <strong>ต้องการคำนวณด้วยราคาช่วงใด?</strong>
+              <p>เลือกใช้ราคาปัจจุบัน หรือให้โมเดลประเมินเฉพาะราคาวัสดุในอนาคต ค่าแรงและเครื่องจักรจะไม่ถูกพยากรณ์</p>
             </div>
             <div className="boq-toolbar-actions">
               <button type="button" className="outline-btn" onClick={loadSample}><FileSpreadsheet size={15} /> ตัวอย่างบ้าน 2 ชั้น</button>
@@ -761,51 +1116,72 @@ export default function CostPlanner() {
             </div>
           </div>
 
-          <div className="boq-plan-grid">
-            <div className="boq-period-card">
-              <div className="boq-time-icon"><CalendarRange size={19} /></div>
-              <div>
-                <label htmlFor="boq-forecast-value">ระยะเวลาก่อนเริ่มก่อสร้าง</label>
-                <div className="boq-custom-period">
-                  <input
-                    id="boq-forecast-value"
-                    type="number"
-                    inputMode="numeric"
-                    min="0"
-                    step="1"
-                    value={forecastValue}
-                    aria-label="จำนวนช่วงเวลาในอนาคต"
-                    onChange={(event) => setForecastValue(event.target.value)}
-                  />
-                  <select value={forecastUnit} onChange={(event) => setForecastUnit(event.target.value)} aria-label="หน่วยช่วงเวลา">
-                    <option value="month">เดือน</option>
-                    <option value="year">ปี</option>
-                  </select>
-                </div>
-                <small>คาดว่าจะเริ่มประมาณ <b>{targetDateLabel}</b> ({forecastMonths.toLocaleString("th-TH")} เดือน)</small>
-              </div>
-            </div>
-
-            <div className="boq-compare-card">
-              <div>
-                <span>ราคาปัจจุบัน</span>
-                <small>{todayLabel}</small>
-                <strong>฿{formatPrice(currentSummary.grandTotal)}</strong>
-              </div>
+          <div className="boq-price-mode" role="radiogroup" aria-label="เลือกฐานราคาที่ใช้ประเมิน">
+            <button type="button" role="radio" aria-checked={priceMode === "current"} className={priceMode === "current" ? "active" : ""} onClick={() => setPriceMode("current")}>
+              <CheckCircle2 size={18} />
+              <span><strong>ราคาปัจจุบัน</strong><small>ใช้ราคากลางภาครัฐล่าสุดในฐานข้อมูล</small></span>
+            </button>
+            <button type="button" role="radio" aria-checked={priceMode === "future"} className={priceMode === "future" ? "active" : ""} onClick={() => setPriceMode("future")}>
               <TrendingUp size={18} />
-              <div>
-                <span>ราคาในอีก {forecastLabel}</span>
-                <small>{targetDateLabel}</small>
-                <strong>{optionalPrice(futureSummary?.grandTotal)}</strong>
-              </div>
-              {!futureSummary && <p>ราคาฝั่งอนาคตจะแสดงเมื่อเชื่อม ML หรือกรอกราคาเป้าหมายในรายละเอียดงาน</p>}
-            </div>
+              <span><strong>ราคาในอนาคต</strong><small>ML ปรับเฉพาะค่าวัสดุ ส่วนค่าแรงและเครื่องจักรคงเดิม</small></span>
+            </button>
           </div>
 
-          {forecastMonths >= 24 && (
-            <div className="boq-long-term-note">
-              <Info size={14} /> ระยะวางแผน {forecastLabel} มีความไม่แน่นอนสูงกว่าระยะสั้น ควรเผื่องบสำรองและทบทวนราคาเป็นระยะ
+          {priceMode === "current" ? (
+            <div className="boq-current-selection">
+              <div className="boq-time-icon"><CalendarRange size={19} /></div>
+              <div><span>ฐานราคาที่เลือก</span><strong>ราคาปัจจุบัน</strong><small>วันที่ประเมิน {todayLabel} • ใช้ข้อมูลล่าสุดที่มีในฐานข้อมูล</small></div>
+              <b>฿{formatPrice(currentSummary.grandTotal)}</b>
             </div>
+          ) : (
+            <>
+              <div className="boq-plan-grid">
+                <div className="boq-period-card">
+                  <div className="boq-time-icon"><CalendarRange size={19} /></div>
+                  <div>
+                    <label htmlFor="boq-forecast-value">ระยะเวลาก่อนเริ่มก่อสร้าง</label>
+                    <div className="boq-custom-period">
+                      <input
+                        id="boq-forecast-value"
+                        type="number"
+                        inputMode="numeric"
+                        min="1"
+                        step="1"
+                        value={forecastValue}
+                        aria-label="จำนวนช่วงเวลาในอนาคต"
+                        onChange={(event) => setForecastValue(event.target.value)}
+                      />
+                      <select value={forecastUnit} onChange={(event) => setForecastUnit(event.target.value)} aria-label="หน่วยช่วงเวลา">
+                        <option value="month">เดือน</option>
+                        <option value="year">ปี</option>
+                      </select>
+                    </div>
+                    <small>คาดว่าจะเริ่มประมาณ <b>{targetDateLabel}</b> ({forecastMonths.toLocaleString("th-TH")} เดือน)</small>
+                  </div>
+                </div>
+
+                <div className="boq-compare-card">
+                  <div>
+                    <span>ราคาปัจจุบัน</span>
+                    <small>{todayLabel}</small>
+                    <strong>฿{formatPrice(currentSummary.grandTotal)}</strong>
+                  </div>
+                  <TrendingUp size={18} />
+                  <div>
+                    <span>ราคาในอีก {forecastLabel}</span>
+                    <small>{targetDateLabel}</small>
+                    <strong>{optionalPrice(futureSummary?.grandTotal)}</strong>
+                  </div>
+                  {!futureSummary && <p>ราคาฝั่งอนาคตจะแสดงเมื่อวัสดุมีผลพยากรณ์ ML หรือกรอกราคาเป้าหมายครบ ค่าแรงและเครื่องจักรจะใช้อัตราปัจจุบัน</p>}
+                </div>
+              </div>
+
+              {forecastMonths >= 24 && (
+                <div className="boq-long-term-note">
+                  <Info size={14} /> ระยะวางแผน {forecastLabel} มีความไม่แน่นอนสูงกว่าระยะสั้น ควรเผื่องบสำรองและทบทวนราคาเป็นระยะ
+                </div>
+              )}
+            </>
           )}
         </div>
       </section>
@@ -815,8 +1191,20 @@ export default function CostPlanner() {
           <div className="boq-step-number">2</div>
           <div>
             <h2>{takeoffMode === "professional" ? "กรอกปริมาณจากแบบก่อสร้าง" : "กรอกปริมาณงานเพื่อประมาณงบ"}</h2>
-            <p>{takeoffMode === "professional" ? "งาน ค.ส.ล. ให้กรอกคอนกรีต เหล็กเสริม และพื้นที่แบบหล่อแยกกัน" : "กรอกปริมาณงานหลัก ระบบจะช่วยแตกวัสดุด้วยค่าประมาณ"}</p>
+            <p>{takeoffMode === "professional" ? "เลือกหมวดแล้วกรอกปริมาณจริง งาน ค.ส.ล. ให้แยกคอนกรีต เหล็กเสริม และแบบหล่อ" : "กรอกปริมาณของแต่ละงาน ระบบช่วยแตกทรัพยากรเฉพาะรายการที่กำหนดไว้"}</p>
           </div>
+        </div>
+        <div className="boq-discipline-overview" aria-label="หมวดหลักของ BOQ">
+          {Object.entries(BOQ_DISCIPLINES).map(([disciplineKey, disciplineTitle]) => {
+            const sections = BOQ_SECTIONS.filter((section) => section.discipline === disciplineKey);
+            const itemCount = sections.reduce((sum, section) => sum + section.items.length, 0);
+            return (
+              <button type="button" key={disciplineKey} onClick={() => scrollToSection(sections[0].id)}>
+                <Building2 size={17} />
+                <span><strong>{disciplineTitle}</strong><small>{sections.length} หมวดงาน • {itemCount} รายการ</small></span>
+              </button>
+            );
+          })}
         </div>
         <div className="boq-category-nav" aria-label="เลือกหมวดงาน">
           {BOQ_SECTIONS.map((section) => (
@@ -837,16 +1225,16 @@ export default function CostPlanner() {
             const sectionFutureTotal = sectionFutureComplete
               ? sectionActiveItems.reduce((sum, item) => sum + (item.futureTotal || 0), 0)
               : null;
+            const sectionSelectedTotal = priceMode === "future" ? sectionFutureTotal : sectionCurrentTotal;
             return (
             <section className="card boq-section" key={section.id} id={`boq-section-${section.id}`}>
               <button type="button" className="boq-section-head" onClick={() => toggleSection(section.id)} aria-expanded={!collapsedSections.has(section.id)}>
                 <div className="boq-section-title">
                   <div className="boq-section-code">{section.code}</div>
-                  <div><h2>{section.title}</h2><span>{section.items.length} รายการงาน</span></div>
+                  <div><span className="boq-discipline-label">{BOQ_DISCIPLINES[section.discipline]}</span><h2>{section.title}</h2><span>{section.items.length} รายการงาน</span></div>
                 </div>
                 <div className="boq-section-totals">
-                  <span>ราคาปัจจุบัน <b>฿{formatPrice(sectionCurrentTotal)}</b></span>
-                  <span>{comparisonLabel} <b>{optionalPrice(sectionFutureTotal)}</b></span>
+                  <span>{selectedPriceLabel} <b>{priceMode === "future" ? optionalPrice(sectionSelectedTotal) : `฿${formatPrice(sectionSelectedTotal)}`}</b></span>
                   {collapsedSections.has(section.id) ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
                 </div>
               </button>
@@ -860,7 +1248,7 @@ export default function CostPlanner() {
                     <article className={`boq-mobile-item ${hasValue ? "has-value" : ""}`} key={`mobile-${item.id}`}>
                       <div className="boq-mobile-item-head">
                         <div><span className="boq-code">{item.code}</span><h3>{item.name}</h3><p>{item.hint}</p></div>
-                        <strong>฿{formatPrice(item.currentTotal)}</strong>
+                        <strong>{priceMode === "future" ? optionalPrice(item.futureTotal) : `฿${formatPrice(item.currentTotal)}`}</strong>
                       </div>
 
                       <div className="boq-mobile-quantity">
@@ -885,12 +1273,15 @@ export default function CostPlanner() {
                         <ResourceBreakdown
                           item={item}
                           comparisonLabel={comparisonLabel}
+                          showFuture={priceMode === "future"}
                           materialSelections={materialSelections}
                           onMaterialSelect={selectOfficialMaterial}
                           quantityOverrides={quantityOverrides}
                           currentRateOverrides={currentRateOverrides}
                           futureRateOverrides={futureRateOverrides}
                           wasteOverrides={wasteOverrides}
+                          note={itemNotes[item.id] || ""}
+                          onNoteChange={(value) => setItemNotes((current) => ({ ...current, [item.id]: value }))}
                           onQuantityOverride={(key, value) => updateMapValue(setQuantityOverrides, key, value, true)}
                           onCurrentRateOverride={(key, value) => updateMapValue(setCurrentRateOverrides, key, value, true)}
                           onFutureRateOverride={(key, value) => updateMapValue(setFutureRateOverrides, key, value, true)}
@@ -903,7 +1294,7 @@ export default function CostPlanner() {
               </div>
               <div className="boq-table-scroll">
                 <table className="boq-table">
-                  <thead><tr><th>รหัส</th><th>รายการงาน</th><th>ปริมาณงาน</th><th>หน่วย</th><th>ราคาปัจจุบัน</th><th>{comparisonLabel}</th><th>รายละเอียด</th></tr></thead>
+                  <thead><tr><th>รหัส</th><th>รายการงาน</th><th>ปริมาณงาน</th><th>หน่วย</th><th>ราคาปัจจุบัน</th>{priceMode === "future" && <th>{comparisonLabel}</th>}<th>รายละเอียด</th></tr></thead>
                   <tbody>
                     {section.items.map((sourceItem) => {
                       const item = calculatedItems.find((candidate) => candidate.id === sourceItem.id);
@@ -928,21 +1319,24 @@ export default function CostPlanner() {
                               ฿{formatPrice(item.currentTotal)}
                               {!item.currentComplete && item.resources.some((resource) => resource.calculatedQty > 0) && <small className="boq-price-missing">ยังขาดอัตราราคา</small>}
                             </td>
-                            <td className="boq-price boq-future-price">{optionalPrice(item.futureTotal)}</td>
+                            {priceMode === "future" && <td className="boq-price boq-future-price">{optionalPrice(item.futureTotal)}</td>}
                             <td><button type="button" className="boq-detail-btn" onClick={() => toggleRow(item.id)}>{expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}{expanded ? "ซ่อน" : "ดูการคำนวณ"}</button></td>
                           </tr>
                           {expanded && (
                             <tr className="boq-breakdown-row">
-                              <td colSpan="7">
+                              <td colSpan={priceMode === "future" ? 7 : 6}>
                                 <ResourceBreakdown
                                   item={item}
                                   comparisonLabel={comparisonLabel}
+                                  showFuture={priceMode === "future"}
                                   materialSelections={materialSelections}
                                   onMaterialSelect={selectOfficialMaterial}
                                   quantityOverrides={quantityOverrides}
                                   currentRateOverrides={currentRateOverrides}
                                   futureRateOverrides={futureRateOverrides}
                                   wasteOverrides={wasteOverrides}
+                                  note={itemNotes[item.id] || ""}
+                                  onNoteChange={(value) => setItemNotes((current) => ({ ...current, [item.id]: value }))}
                                   onQuantityOverride={(key, value) => updateMapValue(setQuantityOverrides, key, value, true)}
                                   onCurrentRateOverride={(key, value) => updateMapValue(setCurrentRateOverrides, key, value, true)}
                                   onFutureRateOverride={(key, value) => updateMapValue(setFutureRateOverrides, key, value, true)}
@@ -966,41 +1360,42 @@ export default function CostPlanner() {
         <aside className="boq-summary-wrap" id="boq-summary">
           <div className="boq-summary">
             <div className="boq-summary-step"><b>3</b><span>ตรวจราคาและสรุปผล</span></div>
-            <div className="eyebrow">STRUCTURAL COST ESTIMATE</div>
-            <h3>BOQ ราคาปัจจุบัน</h3>
-            <div className="boq-grand-total">฿{formatPrice(currentSummary.grandTotal)}</div>
-            <div className="boq-summary-caption">{!activeItems.length ? "กรอกปริมาณจากแบบเพื่อเริ่มคำนวณ" : currentComplete ? "ราคาฐานวันนี้ • ตรวจอัตราราคาครบแล้ว" : "ยอดชั่วคราวเฉพาะรายการที่มีอัตราราคา"}</div>
-            <div className={`boq-validation ${currentComplete ? "ready" : "incomplete"}`}>
-              {currentComplete ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
+            <div className="eyebrow">CONSTRUCTION COST ESTIMATE</div>
+            <h3>BOQ {selectedPriceLabel}</h3>
+            <div className="boq-grand-total">{optionalPrice(selectedSummary?.grandTotal)}</div>
+            <div className="boq-summary-caption">{!activeItems.length ? "กรอกปริมาณจากแบบเพื่อเริ่มคำนวณ" : selectedComplete ? `ฐานราคา ${selectedDateLabel} • ตรวจอัตราราคาครบแล้ว` : priceMode === "future" ? "รอผลพยากรณ์หรือราคาเป้าหมายให้ครบ" : "ยอดชั่วคราวเฉพาะรายการที่มีอัตราราคา"}</div>
+            <div className={`boq-validation ${selectedComplete ? "ready" : "incomplete"}`}>
+              {selectedComplete ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
               <span>
                 {!activeItems.length
                   ? "ยังไม่มีรายการที่กรอกปริมาณ"
-                  : currentComplete
-                  ? "BOQ ราคาปัจจุบันครบพร้อมตรวจทาน"
-                  : `ยังขาดอัตราราคา ${missingCurrentRates.length} ประเภท กรุณาเปิดรายละเอียดแต่ละรายการ`}
+                  : selectedComplete
+                  ? `BOQ ${selectedPriceLabel} ครบพร้อมตรวจทาน`
+                  : `ยังขาดอัตราราคา ${selectedMissingRates.length} ประเภท กรุณาเปิดรายละเอียดแต่ละรายการ`}
               </span>
             </div>
             {uniqueMissingMaterialKeys.length > 0 && <div className="boq-summary-subnote">วัสดุที่ยังจับคู่ราคาภาครัฐไม่ได้ {uniqueMissingMaterialKeys.length} ประเภท สามารถกรอกราคาใบเสนอราคาแทนได้</div>}
             <div className="boq-cost-split">
-              {Object.entries(COST_TYPES).map(([type, label]) => <div key={type}><span><i style={{ background: TYPE_COLORS[type] }} />{label}</span><b>฿{formatPrice(totalsByType[type])}</b></div>)}
+              {Object.entries(COST_TYPES).map(([type, label]) => <div key={type}><span><i style={{ background: TYPE_COLORS[type] }} />{label}</span><b>{priceMode === "future" && !futureComplete ? "—" : `฿${formatPrice(totalsByType[type])}`}</b></div>)}
             </div>
             <div className="boq-markups">
-              <RateField label="ค่าอำนวยการ" value={rates.overhead} onChange={(value) => setRates({ ...rates, overhead: value })} amount={currentSummary.overhead} />
-              <RateField label="กำไรผู้รับเหมา" value={rates.profit} onChange={(value) => setRates({ ...rates, profit: value })} amount={currentSummary.profit} />
-              <RateField label="เงินสำรอง" value={rates.contingency} onChange={(value) => setRates({ ...rates, contingency: value })} amount={currentSummary.contingency} />
-              <RateField label="VAT" value={rates.vat} onChange={(value) => setRates({ ...rates, vat: value })} amount={currentSummary.vat} />
+              <RateField label="ค่าอำนวยการ" value={rates.overhead} onChange={(value) => setRates({ ...rates, overhead: value })} amount={selectedSummary?.overhead} />
+              <RateField label="กำไรผู้รับเหมา" value={rates.profit} onChange={(value) => setRates({ ...rates, profit: value })} amount={selectedSummary?.profit} />
+              <RateField label="เงินสำรอง" value={rates.contingency} onChange={(value) => setRates({ ...rates, contingency: value })} amount={selectedSummary?.contingency} />
+              <RateField label="VAT" value={rates.vat} onChange={(value) => setRates({ ...rates, vat: value })} amount={selectedSummary?.vat} />
             </div>
-            <div className="boq-future-box">
-              <span>BOQ {forecastMonths > 0 ? `คาดการณ์ในอีก ${forecastLabel}` : "ราคาปัจจุบัน"}</span>
-              <strong>{optionalPrice(futureSummary?.grandTotal)}</strong>
-              <em>เป้าหมายประมาณ {targetDateLabel}</em>
+            {priceMode === "future" && <div className="boq-future-box">
+              <span>เปรียบเทียบกับ BOQ ราคาปัจจุบัน</span>
+              <strong>฿{formatPrice(currentSummary.grandTotal)}</strong>
+              <em>ราคาปัจจุบัน ณ {todayLabel}</em>
               {difference === null ? (
-                <small className="waiting">เชื่อมผลพยากรณ์ ML หรือกรอกราคาเป้าหมายในรายละเอียดรายการ</small>
+                <small className="waiting">รอผลพยากรณ์ราคาวัสดุจาก ML หรือกรอกราคาวัสดุเป้าหมายให้ครบ ค่าแรงและเครื่องจักรคงอัตราปัจจุบัน</small>
               ) : (
                 <small className={difference >= 0 ? "up" : "down"}>{difference >= 0 ? "+" : "-"}฿{formatPrice(Math.abs(difference))} ({differencePercent >= 0 ? "+" : ""}{differencePercent.toFixed(1)}%)</small>
               )}
-            </div>
-            <button className="primary-btn" onClick={exportBOQ} disabled={!activeItems.length}><Calculator size={16} /> {currentComplete ? "ดาวน์โหลด BOQ แบบละเอียด" : "ดาวน์โหลด BOQ ฉบับร่าง"}</button>
+            </div>}
+            <div className="boq-official-disclaimer"><AlertTriangle size={14} /><span><b>ราคากลางภาครัฐ ไม่ใช่ราคาขายปลีก</b> ใช้เพื่อประมาณและเปรียบเทียบแนวโน้มเท่านั้น ต้องขอใบเสนอราคาจากร้านค้าก่อนนำไปจัดซื้อหรือเสนอราคาจริง<br /><b>ML พยากรณ์เฉพาะราคาวัสดุ</b> ค่าแรงและเครื่องจักรเป็นค่าที่ผู้ใช้กรอกและคงอัตราปัจจุบัน</span></div>
+            <button className="primary-btn" onClick={exportBOQ} disabled={!activeItems.length}><Calculator size={16} /> {selectedComplete ? "ดาวน์โหลด BOQ แบบละเอียด" : "ดาวน์โหลด BOQ ฉบับร่าง"}</button>
             {savedAt && <div className="boq-saved-at">บันทึกล่าสุด {new Date(savedAt).toLocaleString("th-TH")}</div>}
           </div>
         </aside>
@@ -1009,15 +1404,15 @@ export default function CostPlanner() {
       <section className="card boq-insights">
         <div className="card-head"><div><h2>สรุปเพื่อวางแผนโครงการ</h2><span>คำนวณจาก {activeItems.length} รายการที่กรอกปริมาณแล้ว</span></div><TrendingUp size={18} /></div>
         <div className="boq-insight-grid">
-          <InsightCard icon={<Building2 size={17} />} label="ต้นทุนตรง" value={`฿${formatPrice(currentDirect)}`} />
-          <InsightCard icon={<CalendarRange size={17} />} label={forecastMonths > 0 ? `ต้นทุนในอีก ${forecastLabel}` : "ต้นทุนปัจจุบัน"} value={optionalPrice(futureSummary?.grandTotal)} />
+          <InsightCard icon={<Building2 size={17} />} label={`ต้นทุนตรง • ${selectedPriceLabel}`} value={selectedDirect === null ? "รอข้อมูล" : `฿${formatPrice(selectedDirect)}`} />
+          <InsightCard icon={<CalendarRange size={17} />} label={`รวมโครงการ • ${selectedDateLabel}`} value={optionalPrice(selectedSummary?.grandTotal)} />
           <InsightCard icon={<TrendingUp size={17} />} label="ความเสี่ยงจากราคา" value={riskLevel} />
-          <InsightCard icon={<Calculator size={17} />} label="งบสำรองจากราคา" value={difference === null ? "รอข้อมูล ML" : difference > 0 ? `฿${formatPrice(difference)}` : "ยังไม่เพิ่ม"} />
+          <InsightCard icon={<Calculator size={17} />} label="งบสำรองจากราคา" value={priceMode === "current" ? "ยังไม่รวมการคาดการณ์" : difference === null ? "รอข้อมูล ML" : difference > 0 ? `฿${formatPrice(difference)}` : "ยังไม่เพิ่ม"} />
         </div>
       </section>
 
       <div className="boq-mobile-total-bar">
-        <div><span>ยอดปัจจุบัน</span><strong>฿{formatPrice(currentSummary.grandTotal)}</strong></div>
+        <div><span>{selectedPriceLabel}</span><strong>{optionalPrice(selectedSummary?.grandTotal)}</strong></div>
         <button type="button" onClick={scrollToSummary}>ดูสรุป <ChevronUp size={16} /></button>
       </div>
     </>
@@ -1029,7 +1424,7 @@ function TextField({ label, value, onChange, placeholder, icon }) {
 }
 
 function RateField({ label, value, onChange, amount }) {
-  return <div className="boq-rate-row"><span>{label}</span><label><input type="number" min="0" step="0.5" value={value} onChange={(event) => onChange(number(event.target.value))} /><i>%</i></label><b>฿{formatPrice(amount)}</b></div>;
+  return <div className="boq-rate-row"><span>{label}</span><label><input type="number" min="0" step="0.5" value={value} onChange={(event) => onChange(number(event.target.value))} /><i>%</i></label><b>{amount === null || amount === undefined ? "—" : `฿${formatPrice(amount)}`}</b></div>;
 }
 
 function AssumptionField({ label, value, unit, onChange }) {
@@ -1054,12 +1449,15 @@ function ExactTakeoffInputs({ value, onChange }) {
 function ResourceBreakdown({
   item,
   comparisonLabel,
+  showFuture,
   materialSelections,
   onMaterialSelect,
   quantityOverrides,
   currentRateOverrides,
   futureRateOverrides,
   wasteOverrides,
+  note,
+  onNoteChange,
   onQuantityOverride,
   onCurrentRateOverride,
   onFutureRateOverride,
@@ -1068,8 +1466,12 @@ function ResourceBreakdown({
   return (
     <div className="boq-resource-box">
       <div className="boq-formula-note">
-        ตรวจรายการ วัสดุ ปริมาณสูญเสีย และราคาต่อหน่วย ช่องที่เว้นว่างจะใช้ค่าจากระบบ และราคาทรัพยากรชนิดเดียวกันจะใช้ร่วมกันทั้งโครงการ
+        ตรวจรายการ วัสดุ ปริมาณสูญเสีย และราคาต่อหน่วย ช่องที่เว้นว่างจะใช้ค่าจากระบบ โดย ML จะเปลี่ยนเฉพาะราคาวัสดุเท่านั้น
       </div>
+      <label className="boq-item-note">
+        <span>หมายเหตุรายการ (จะแสดงในไฟล์ BOQ)</span>
+        <input value={note} placeholder="เช่น ยี่ห้อ รุ่น ขนาด สเปก หรือขอบเขตงาน" onChange={(event) => onNoteChange(event.target.value)} />
+      </label>
       <div className="boq-resource-cards">
         {item.resources.map((resource, index) => {
           const options = resource.type === "material" ? selectableMaterials(resource) : [];
@@ -1096,7 +1498,7 @@ function ResourceBreakdown({
                     {options.map((material) => <option key={materialId(material)} value={materialId(material)}>{materialName(material)} — {formatPrice(materialPrice(material))} บาท/{materialUnit(material)}</option>)}
                   </select>
                   {resource.catalogMaterial
-                    ? <small className="boq-official-source">ราคาภาครัฐ ฿{formatPrice(resource.officialOriginalPrice)}/{resource.officialOriginalUnit}</small>
+                    ? <small className="boq-official-source">ราคากลางภาครัฐ ฿{formatPrice(resource.officialOriginalPrice)}/{resource.officialOriginalUnit} • ไม่ใช่ราคาขายปลีก</small>
                     : <small className="boq-price-missing">ไม่พบราคาภาครัฐ กรุณากรอกราคาเอง</small>}
                 </label>
               )}
@@ -1106,18 +1508,19 @@ function ResourceBreakdown({
               <div className="boq-resource-fields">
                 <label className="boq-card-field"><span>เผื่อสูญเสีย</span><div><input inputMode="decimal" type="number" min="0" step="any" value={wasteOverride} placeholder={String(resource.wastePct)} onChange={(event) => onWasteOverride(resource.key, event.target.value)} /><i>%</i></div></label>
                 <label className="boq-card-field"><span>ปริมาณคิดราคา</span><div><input inputMode="decimal" type="number" min="0" step="any" value={quantityOverride} placeholder={formatQty(resource.defaultCalculatedQty)} onChange={(event) => onQuantityOverride(quantityKey, event.target.value)} /><i>{resource.unit}</i></div></label>
-                <label className="boq-card-field"><span>ราคาปัจจุบัน/หน่วย</span><div className={resource.rateMissing ? "missing" : ""}><i>฿</i><input inputMode="decimal" type="number" min="0" step="any" value={currentRateOverride} placeholder={resource.currentUnitPrice > 0 ? formatPrice(resource.currentUnitPrice) : "กรอกราคา"} onChange={(event) => onCurrentRateOverride(resource.key, event.target.value)} /></div><small>{resource.currentRateSource === "official" ? "ฐานราคาภาครัฐ" : resource.currentRateSource === "manual" ? "ราคาที่กำหนดเอง" : "ยังไม่ระบุราคา"}</small></label>
-                <label className="boq-card-field"><span>{comparisonLabel.startsWith("อีก") ? `ราคา${comparisonLabel}/หน่วย` : `${comparisonLabel}/หน่วย`}</span><div className={resource.futurePriceMissing ? "missing" : ""}><i>฿</i><input inputMode="decimal" type="number" min="0" step="any" value={futureRateOverride} placeholder={resource.futureUnitPrice !== null && resource.futureUnitPrice !== undefined ? formatPrice(resource.futureUnitPrice) : "รอ ML"} onChange={(event) => onFutureRateOverride(resource.key, event.target.value)} /></div><small>{resource.futureRateSource === "model" ? "จากโมเดล ML" : resource.futureRateSource === "manual" ? "ราคาที่กำหนดเอง" : resource.futureRateSource === "current" ? "เท่าราคาปัจจุบัน" : "ยังไม่มีราคาคาดการณ์"}</small></label>
+                <label className="boq-card-field"><span>ราคาปัจจุบัน/หน่วย</span><div className={resource.rateMissing ? "missing" : ""}><i>฿</i><input inputMode="decimal" type="number" min="0" step="any" value={currentRateOverride} placeholder={resource.currentUnitPrice > 0 ? formatPrice(resource.currentUnitPrice) : "กรอกราคา"} onChange={(event) => onCurrentRateOverride(resource.key, event.target.value)} /></div><small>{resource.currentRateSource === "official" ? "ราคากลางภาครัฐ • ไม่ใช่ราคาขายปลีก" : resource.currentRateSource === "manual" ? "ราคาที่กำหนดเอง" : "ยังไม่ระบุราคา"}</small></label>
+                {showFuture && resource.type === "material" && <label className="boq-card-field"><span>{comparisonLabel.startsWith("อีก") ? `ราคา${comparisonLabel}/หน่วย` : `${comparisonLabel}/หน่วย`}</span><div className={resource.futurePriceMissing ? "missing" : ""}><i>฿</i><input inputMode="decimal" type="number" min="0" step="any" value={futureRateOverride} placeholder={resource.futureUnitPrice !== null && resource.futureUnitPrice !== undefined ? formatPrice(resource.futureUnitPrice) : "รอ ML"} onChange={(event) => onFutureRateOverride(resource.key, event.target.value)} /></div><small>{resource.futureRateSource === "model" ? "พยากรณ์ราคาวัสดุจาก ML" : resource.futureRateSource === "manual" ? "ราคาวัสดุที่กำหนดเอง" : "ยังไม่มีราคาวัสดุคาดการณ์"}</small></label>}
+                {showFuture && resource.type !== "material" && <div className="boq-card-field boq-static-rate"><span>อัตราในอนาคต/หน่วย</span><div><i>฿</i><b>{resource.currentUnitPrice > 0 ? formatPrice(resource.currentUnitPrice) : "—"}</b></div><small>คงอัตราปัจจุบัน • ไม่พยากรณ์ด้วย ML</small></div>}
               </div>
 
-              <div className="boq-resource-future"><span>รวม{comparisonLabel}</span><strong>{optionalPrice(resource.futureTotal)}</strong></div>
+              {showFuture && <div className="boq-resource-future"><span>รวม{comparisonLabel}</span><strong>{optionalPrice(resource.futureTotal)}</strong></div>}
             </article>
           );
         })}
       </div>
       <div className="boq-resource-scroll">
         <table>
-          <thead><tr><th>ประเภท</th><th>รายการและแหล่งราคา</th><th>สูญเสีย %</th><th>ปริมาณคิดราคา</th><th>หน่วย</th><th>ราคาปัจจุบัน/หน่วย</th><th>รวมปัจจุบัน</th><th>ราคา{comparisonLabel}/หน่วย</th><th>รวม{comparisonLabel}</th></tr></thead>
+          <thead><tr><th>ประเภท</th><th>รายการและแหล่งราคา</th><th>สูญเสีย %</th><th>ปริมาณคิดราคา</th><th>หน่วย</th><th>ราคาปัจจุบัน/หน่วย</th><th>รวมปัจจุบัน</th>{showFuture && <><th>ราคา{comparisonLabel}/หน่วย</th><th>รวม{comparisonLabel}</th></>}</tr></thead>
           <tbody>
             {item.resources.map((resource, index) => {
               const options = resource.type === "material" ? selectableMaterials(resource) : [];
@@ -1155,8 +1558,9 @@ function ResourceBreakdown({
                         </select>
                         {resource.catalogMaterial ? (
                           <small className="boq-official-source">
-                            ภาครัฐ: ฿{formatPrice(resource.officialOriginalPrice)}/{resource.officialOriginalUnit}
+                            ราคากลางภาครัฐ: ฿{formatPrice(resource.officialOriginalPrice)}/{resource.officialOriginalUnit}
                             {canonicalUnit(resource.officialOriginalUnit) !== canonicalUnit(resource.unit) ? ` • แปลงเป็นบาท/${resource.unit}` : ""}
+                            {" • ไม่ใช่ราคาขายปลีก"}
                           </small>
                         ) : (
                           <small className="boq-price-missing">ไม่พบราคาภาครัฐ — กรอกราคาใบเสนอราคาได้</small>
@@ -1174,11 +1578,17 @@ function ResourceBreakdown({
                     <small>{resource.currentRateSource === "official" ? "ภาครัฐ" : resource.currentRateSource === "manual" ? "กำหนดเอง" : "ยังไม่ระบุ"}</small>
                   </td>
                   <td className="boq-price">{resource.rateMissing ? "—" : `฿${formatPrice(resource.currentTotal)}`}</td>
-                  <td>
-                    <input className={`boq-grid-input rate ${resource.futurePriceMissing ? "missing" : ""}`} type="number" min="0" step="any" value={futureRateOverride} placeholder={resource.futureUnitPrice !== null && resource.futureUnitPrice !== undefined ? formatPrice(resource.futureUnitPrice) : "รอ ML"} onChange={(event) => onFutureRateOverride(resource.key, event.target.value)} />
-                    <small>{resource.futureRateSource === "model" ? "ML" : resource.futureRateSource === "manual" ? "กำหนดเอง" : resource.futureRateSource === "current" ? "เท่าราคาปัจจุบัน" : "รอข้อมูล"}</small>
-                  </td>
-                  <td className="boq-price">{optionalPrice(resource.futureTotal)}</td>
+                  {showFuture && <td>
+                    {resource.type === "material" ? (
+                      <>
+                        <input className={`boq-grid-input rate ${resource.futurePriceMissing ? "missing" : ""}`} type="number" min="0" step="any" value={futureRateOverride} placeholder={resource.futureUnitPrice !== null && resource.futureUnitPrice !== undefined ? formatPrice(resource.futureUnitPrice) : "รอ ML"} onChange={(event) => onFutureRateOverride(resource.key, event.target.value)} />
+                        <small>{resource.futureRateSource === "model" ? "ML เฉพาะวัสดุ" : resource.futureRateSource === "manual" ? "กำหนดเอง" : "รอข้อมูลวัสดุ"}</small>
+                      </>
+                    ) : (
+                      <><b>{resource.currentUnitPrice > 0 ? `฿${formatPrice(resource.currentUnitPrice)}` : "—"}</b><small>คงอัตราปัจจุบัน • ไม่ใช่ ML</small></>
+                    )}
+                  </td>}
+                  {showFuture && <td className="boq-price">{optionalPrice(resource.futureTotal)}</td>}
                 </tr>
               );
             })}
@@ -1195,9 +1605,15 @@ function InsightCard({ icon, label, value }) {
 
 const BOQ_STYLES = `
   .boq-header-actions { display:flex; align-items:center; gap:8px; }
-  .boq-notice { display:flex; align-items:flex-start; gap:10px; padding:12px 14px; margin-bottom:16px; border:1px solid rgba(59,130,246,.16); border-radius:12px; background:rgba(59,130,246,.07); font-size:12px; line-height:1.65; }
-  .boq-notice svg { margin-top:2px; flex:0 0 auto; color:#3b82f6; }
-  .boq-notice a { color:#2563eb; font-weight:700; text-decoration:none; }
+  .boq-notice { display:flex; align-items:flex-start; gap:10px; padding:13px 14px; margin-bottom:16px; border:1px solid rgba(217,119,6,.24); border-radius:12px; background:rgba(245,158,11,.08); font-size:11px; line-height:1.6; }
+  .boq-notice svg { margin-top:2px; flex:0 0 auto; color:#d97706; }
+  .boq-notice > div { min-width:0; }
+  .boq-notice strong, .boq-notice span { display:block; }
+  .boq-notice strong { margin-bottom:2px; color:#b45309; font-size:12px; }
+  .boq-notice span { opacity:.74; }
+  .boq-notice .boq-ml-scope { margin-top:5px; padding-top:5px; border-top:1px solid rgba(217,119,6,.16); color:#92400e; opacity:.92; }
+  .boq-notice .boq-ml-scope b { display:inline; color:inherit; }
+  .boq-notice a { display:inline-block; margin-top:4px; color:#b45309; font-weight:750; text-decoration:none; }
   .boq-project-card { margin-bottom:18px; }
   .boq-project-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
   .boq-field { display:block; } .boq-field > span { display:block; margin-bottom:7px; }
@@ -1217,6 +1633,19 @@ const BOQ_STYLES = `
   .boq-planning-panel { margin-top:18px; padding-top:16px; border-top:1px solid rgba(148,163,184,.14); }
   .boq-planning-head { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:13px; }
   .boq-planning-head strong { display:block; margin-top:4px; font-size:13px; }
+  .boq-price-mode { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-bottom:10px; }
+  .boq-price-mode button { min-height:68px; display:flex; align-items:center; gap:10px; padding:12px 14px; border:1px solid rgba(148,163,184,.22); border-radius:12px; background:rgba(148,163,184,.035); color:inherit; cursor:pointer; text-align:left; }
+  .boq-price-mode button > svg { flex:0 0 auto; color:#64748b; }
+  .boq-price-mode button span { min-width:0; }
+  .boq-price-mode button strong, .boq-price-mode button small { display:block; }
+  .boq-price-mode button strong { margin-bottom:3px; font-size:12px; }
+  .boq-price-mode button small { font-size:9px; line-height:1.4; opacity:.52; }
+  .boq-price-mode button.active { border-color:rgba(37,99,235,.58); background:rgba(37,99,235,.075); box-shadow:0 0 0 2px rgba(37,99,235,.07); }
+  .boq-price-mode button.active > svg { color:#2563eb; }
+  .boq-current-selection { min-height:82px; display:grid; grid-template-columns:38px minmax(0,1fr) auto; align-items:center; gap:11px; padding:14px; border:1px solid rgba(59,130,246,.25); border-radius:13px; background:rgba(59,130,246,.045); }
+  .boq-current-selection span, .boq-current-selection small { display:block; font-size:9px; opacity:.52; }
+  .boq-current-selection strong { display:block; margin:2px 0; font-size:13px; }
+  .boq-current-selection > b { font-size:18px; white-space:nowrap; }
   .boq-time-compare { display:grid; grid-template-columns:minmax(0,1fr) 36px minmax(0,1.25fr); align-items:stretch; gap:8px; }
   .boq-time-card { min-height:108px; display:flex; align-items:center; gap:11px; padding:15px; border:1px solid rgba(148,163,184,.18); border-radius:13px; background:rgba(148,163,184,.045); }
   .boq-time-card.current > b { margin-left:auto; font-size:17px; white-space:nowrap; }
@@ -1285,6 +1714,9 @@ const BOQ_STYLES = `
   .boq-rate-row { display:grid; grid-template-columns:1fr 58px 90px; gap:7px; align-items:center; margin:8px 0; font-size:10px; } .boq-rate-row > span { opacity:.62; }
   .boq-rate-row label { display:flex; align-items:center; border:1px solid rgba(255,255,255,.13); border-radius:7px; overflow:hidden; } .boq-rate-row input { width:38px; padding:5px 2px 5px 6px; border:0; outline:0; background:transparent; color:#fff; font-size:10px; text-align:right; } .boq-rate-row i { padding-right:5px; font-style:normal; opacity:.5; } .boq-rate-row b { text-align:right; white-space:nowrap; }
   .boq-future-box { margin:16px 0 12px; padding:12px; border-radius:10px; background:rgba(255,255,255,.07); } .boq-future-box span, .boq-future-box small, .boq-future-box em { display:block; font-size:9px; opacity:.55; } .boq-future-box strong { display:block; margin:5px 0 3px; font-size:17px; } .boq-future-box em { margin-bottom:6px; font-style:normal; } .boq-future-box small.up { color:#fbbf24; opacity:1; } .boq-future-box small.down { color:#34d399; opacity:1; } .boq-future-box small.waiting { color:#cbd5e1; opacity:.8; }
+  .boq-official-disclaimer { display:flex; align-items:flex-start; gap:7px; margin:12px 0; padding:10px; border:1px solid rgba(251,191,36,.24); border-radius:9px; background:rgba(251,191,36,.1); color:#fde68a; font-size:8px; line-height:1.5; }
+  .boq-official-disclaimer svg { flex:0 0 auto; margin-top:1px; }
+  .boq-official-disclaimer b { display:block; margin-bottom:2px; color:#fef3c7; }
   .boq-summary .primary-btn { width:100%; justify-content:center; } .boq-summary button:disabled, .outline-btn:disabled { opacity:.4; cursor:not-allowed; }
   .boq-saved-at { margin-top:8px; text-align:center; font-size:8px; opacity:.45; }
   .boq-insights { margin-top:18px; } .boq-insight-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; } .boq-insight-card { display:flex; align-items:flex-start; gap:10px; padding:13px; border-radius:11px; background:rgba(148,163,184,.07); } .boq-insight-card svg { flex:0 0 auto; } .boq-insight-card span { display:block; font-size:9px; opacity:.5; } .boq-insight-card strong { display:block; margin-top:4px; font-size:12px; }
@@ -1297,7 +1729,7 @@ const BOQ_STYLES = `
   .boq-flow b { width:27px; height:27px; display:grid; place-items:center; flex:0 0 auto; border-radius:50%; background:rgba(148,163,184,.14); color:inherit; }
   .boq-flow .active { color:#2563eb; } .boq-flow .active b { background:#2563eb; color:#fff; }
   .boq-flow i { height:1px; background:rgba(148,163,184,.25); }
-  .boq-notice { align-items:center; }
+  .boq-notice { align-items:flex-start; }
   .boq-step-head { display:flex; align-items:flex-start; gap:11px; margin-bottom:17px; }
   .boq-step-number { width:34px; height:34px; display:grid; place-items:center; flex:0 0 auto; border-radius:10px; background:#2563eb; color:#fff; font-size:14px; font-weight:850; box-shadow:0 7px 16px rgba(37,99,235,.2); }
   .boq-step-head h2 { margin:1px 0 3px; font-size:16px; }
@@ -1338,6 +1770,12 @@ const BOQ_STYLES = `
   .boq-compare-card p { grid-column:1/-1; margin:3px 0 0; padding-top:8px; border-top:1px solid rgba(148,163,184,.13); font-size:9px; line-height:1.45; opacity:.5; }
   .boq-work-head { margin:0 0 14px; padding-bottom:13px !important; }
   .boq-work-head .boq-step-head { margin-bottom:13px; }
+  .boq-discipline-overview { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:9px; margin-bottom:12px; }
+  .boq-discipline-overview button { min-width:0; min-height:58px; display:flex; align-items:center; gap:9px; padding:10px 12px; border:1px solid rgba(59,130,246,.18); border-radius:11px; background:rgba(59,130,246,.045); color:inherit; cursor:pointer; text-align:left; }
+  .boq-discipline-overview svg { flex:0 0 auto; color:#2563eb; }
+  .boq-discipline-overview span, .boq-discipline-overview strong, .boq-discipline-overview small { display:block; min-width:0; }
+  .boq-discipline-overview strong { overflow:hidden; font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
+  .boq-discipline-overview small { margin-top:3px; font-size:8px; opacity:.5; }
   .boq-category-nav { display:flex; gap:7px; padding-bottom:2px; overflow-x:auto; scrollbar-width:none; }
   .boq-category-nav::-webkit-scrollbar { display:none; }
   .boq-category-nav button { min-height:38px; display:flex; align-items:center; gap:7px; flex:0 0 auto; padding:7px 11px 7px 8px; border:1px solid rgba(148,163,184,.2); border-radius:999px; background:rgba(148,163,184,.035); color:inherit; cursor:pointer; font-size:9px; font-weight:650; }
@@ -1345,10 +1783,17 @@ const BOQ_STYLES = `
   .boq-section { scroll-margin-top:12px; }
   .boq-section-head { width:100%; border:0; border-bottom:1px solid rgba(148,163,184,.14); background:transparent; color:inherit; cursor:pointer; text-align:left; }
   .boq-section-head:hover { background:rgba(148,163,184,.025); }
+  .boq-discipline-label { margin:0 0 2px !important; color:#2563eb; font-size:7px !important; font-weight:750; letter-spacing:.03em; opacity:.85 !important; }
   .boq-section-totals svg { flex:0 0 auto; opacity:.5; }
   .boq-mobile-items, .boq-resource-cards, .boq-mobile-total-bar { display:none; }
   .boq-summary-step { display:flex; align-items:center; gap:8px; margin-bottom:13px; padding-bottom:12px; border-bottom:1px solid rgba(255,255,255,.1); font-size:10px; font-weight:750; }
   .boq-summary-step b { width:27px; height:27px; display:grid; place-items:center; border-radius:8px; background:#3b82f6; }
+  .boq-item-note { display:block; margin:0 0 10px; }
+  .boq-item-note > span { display:block; margin-bottom:5px; font-size:9px; font-weight:700; opacity:.6; }
+  .boq-item-note input { width:100%; min-height:40px; padding:8px 10px; border:1px solid rgba(148,163,184,.22); border-radius:8px; outline:0; background:var(--card-bg,#fff); color:inherit; font:inherit; }
+  .boq-item-note input:focus { border-color:rgba(37,99,235,.55); box-shadow:0 0 0 2px rgba(37,99,235,.08); }
+  .boq-static-rate > div { padding:0 10px; }
+  .boq-static-rate b { margin-left:6px; font-size:12px; }
 
   @media (max-width:760px) {
     .boq-header-actions { width:100%; display:grid; grid-template-columns:1fr 1fr; gap:8px; }
@@ -1369,6 +1814,10 @@ const BOQ_STYLES = `
     .boq-assumptions { grid-template-columns:1fr 1fr; padding:10px; }
     .boq-assumption-field input { min-height:38px; }
     .boq-planning-head { gap:12px; }
+    .boq-price-mode { grid-template-columns:1fr; }
+    .boq-price-mode button { min-height:70px; }
+    .boq-current-selection { grid-template-columns:34px minmax(0,1fr); padding:12px; }
+    .boq-current-selection > b { grid-column:2; font-size:16px; }
     .boq-toolbar-actions { display:grid; grid-template-columns:1fr 44px; gap:8px; }
     .boq-toolbar-actions .outline-btn { min-height:44px; justify-content:center; }
     .boq-icon-btn { width:44px; height:44px; }
@@ -1378,6 +1827,8 @@ const BOQ_STYLES = `
     .boq-compare-card { padding:12px; }
     .boq-compare-card strong { font-size:14px; }
     .boq-work-head { padding:14px !important; }
+    .boq-discipline-overview { grid-template-columns:1fr; gap:7px; }
+    .boq-discipline-overview button { min-height:54px; }
     .boq-category-nav { margin:0 -14px -2px; padding:0 14px 3px; }
     .boq-category-nav button { min-height:42px; }
     .boq-layout { display:block; }
@@ -1410,6 +1861,7 @@ const BOQ_STYLES = `
     .boq-detail-btn.mobile { width:100%; min-height:44px; justify-content:center; margin-top:10px; border:1px solid rgba(59,130,246,.2); border-radius:9px; background:rgba(59,130,246,.06); }
     .boq-resource-box { margin-top:10px; padding:9px; }
     .boq-formula-note { margin-bottom:9px; font-size:9px; line-height:1.5; }
+    .boq-item-note input { min-height:44px; font-size:16px; }
     .boq-resource-scroll { display:none; }
     .boq-resource-cards { display:grid; gap:9px; }
     .boq-resource-card { padding:11px; border:1px solid rgba(148,163,184,.17); border-radius:10px; background:var(--card-bg,#fff); }
