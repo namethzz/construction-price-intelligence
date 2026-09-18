@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from "react";
-import { ArrowDownRight, ArrowUpRight, BarChart3, Database, Info, MapPin, PackageSearch, TrendingUp } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, BarChart3, Database, Info, MapPin, TrendingUp } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { getMaterialById, materials, priceData, searchMaterials } from "../data.js";
+import { getMaterialById, materials, priceData } from "../data.js";
+import MaterialPicker from "../components/MaterialPicker.jsx";
 import { PageHeader } from "../components/Shared.jsx";
 
 const OFFICIAL_PRICE_URL = "https://index.tpso.go.th/construction-material-prices/prices-building-materials";
@@ -83,13 +84,8 @@ function trendLabel(change) {
 export default function Analysis() {
   const defaultMaterial = materials[0];
   const [selectedId, setSelectedId] = useState(defaultMaterial?.id ?? "");
-  const [materialQuery, setMaterialQuery] = useState("");
   const [analysisMonths, setAnalysisMonths] = useState(12);
   const selected = useMemo(() => getMaterialById(selectedId) || materials[0], [selectedId]);
-  const materialOptions = useMemo(() => {
-    const matches = searchMaterials(materialQuery, 50);
-    return selected && !matches.some((item) => item.id === selected.id) ? [selected, ...matches.slice(0, 49)] : matches;
-  }, [materialQuery, selected]);
 
   const fullHistory = useMemo(() => priceData.map((row) => ({ key: row?.key, month: row?.month ?? row?.key, price: getPrice(row, selected?.id), source: row })).filter((row) => row.price !== null), [selected]);
   const visibleHistory = useMemo(() => fullHistory.slice(-Math.max(1, Math.round(numeric(analysisMonths) ?? 12))), [fullHistory, analysisMonths]);
@@ -118,8 +114,7 @@ export default function Analysis() {
 
       <section className="card an-controls">
         <div className="an-control-grid">
-          <label><span>ค้นหาวัสดุ</span><div><PackageSearch size={17} /><input value={materialQuery} onChange={(event) => setMaterialQuery(event.target.value)} placeholder="ชื่อ รหัส หรือหมวดวัสดุ" /></div></label>
-          <label><span>วัสดุที่ต้องการวิเคราะห์</span><div><PackageSearch size={17} /><select value={selected?.id ?? ""} onChange={(event) => setSelectedId(event.target.value)}>{materialOptions.map((item) => <option key={item.id} value={item.id}>{item.id} — {item.name}</option>)}</select></div></label>
+          <div className="an-picker-field"><MaterialPicker materials={materials} value={selected?.id ?? ""} onChange={setSelectedId} label="วัสดุที่ต้องการวิเคราะห์" /></div>
           <label><span>ช่วงข้อมูลย้อนหลัง</span><div><BarChart3 size={17} /><input inputMode="numeric" type="number" min="1" step="1" value={analysisMonths} onChange={(event) => setAnalysisMonths(event.target.value)} /><i>เดือน</i></div></label>
           <label><span>พื้นที่</span><div className="readonly"><MapPin size={17} /><strong>กรุงเทพมหานคร (อ้างอิงราคาส่วนกลาง)</strong></div></label>
         </div>
@@ -168,9 +163,9 @@ function EmptyFactors({ text }) {
 const ANALYSIS_STYLES = `
   .an-notice { display:flex; align-items:flex-start; gap:10px; margin-bottom:16px; padding:12px 14px; border-radius:12px; background:rgba(59,130,246,.07); color:#1d4ed8; font-size:10px; line-height:1.55; }
   .an-notice svg { flex:0 0 auto; margin-top:2px; } .an-notice strong,.an-notice span { display:block; } .an-notice span { margin-top:2px; opacity:.72; }
-  .an-controls { margin-bottom:14px; } .an-control-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.25fr) minmax(140px,.55fr) minmax(220px,.8fr); gap:11px; }
+  .an-controls { margin-bottom:14px; overflow:visible; } .an-control-grid { display:grid; grid-template-columns:minmax(0,1.7fr) minmax(140px,.45fr) minmax(220px,.75fr); align-items:end; gap:11px; } .an-picker-field { min-width:0; }
   .an-control-grid label > span { display:block; margin-bottom:6px; font-size:9px; font-weight:700; opacity:.55; } .an-control-grid label > div { min-height:45px; display:flex; align-items:center; gap:8px; padding:0 11px; border:1px solid rgba(148,163,184,.23); border-radius:10px; background:rgba(148,163,184,.035); }
-  .an-control-grid svg { flex:0 0 auto; opacity:.5; } .an-control-grid select,.an-control-grid input { width:100%; min-width:0; border:0; outline:0; background:transparent; color:inherit; font:inherit; } .an-control-grid input { font-weight:750; } .an-control-grid i { font-size:9px; font-style:normal; opacity:.5; }
+  .an-control-grid > label > div > svg { flex:0 0 auto; opacity:.5; } .an-control-grid > label select,.an-control-grid > label input { width:100%; min-width:0; border:0; outline:0; background:transparent; color:inherit; font:inherit; } .an-control-grid > label input { font-weight:750; } .an-control-grid i { font-size:9px; font-style:normal; opacity:.5; }
   .an-control-grid .readonly { opacity:.7; } .an-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-bottom:14px; }
   .an-metric { padding:14px !important; } .an-metric > span,.an-metric small { display:block; font-size:9px; opacity:.5; } .an-metric strong { display:block; margin:6px 0 4px; font-size:18px; } .an-metric small { min-height:17px; } .an-metric small.up,.an-metric small.down { display:flex; align-items:center; gap:3px; opacity:1; } .an-metric small.up { color:#dc2626; } .an-metric small.down { color:#059669; }
   .an-main-grid { display:grid; grid-template-columns:minmax(0,1.55fr) minmax(260px,.45fr); gap:14px; margin-bottom:14px; } .an-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:13px; }
@@ -180,7 +175,7 @@ const ANALYSIS_STYLES = `
   .an-factor-list { display:grid; gap:8px; } .an-factor-list article { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:11px 12px; border:1px solid rgba(148,163,184,.14); border-radius:9px; } .an-factor-list strong,.an-factor-list small { display:block; } .an-factor-list strong { font-size:11px; } .an-factor-list small { margin-top:3px; font-size:8px; opacity:.48; }
   .an-correlation { min-width:145px; text-align:right; } .an-correlation b,.an-correlation span { display:block; } .an-correlation b { font-size:15px; } .an-correlation span { margin-top:2px; font-size:8px; opacity:.55; }
   .an-empty { min-height:150px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; padding:20px; text-align:center; border:1px dashed rgba(148,163,184,.24); border-radius:10px; } .an-empty svg { opacity:.35; } .an-empty strong { font-size:12px; } .an-empty span { max-width:560px; font-size:9px; line-height:1.55; opacity:.5; }
-  @media (max-width:900px) { .an-control-grid { grid-template-columns:1fr 1fr; } .an-main-grid { grid-template-columns:1fr; } }
-  @media (max-width:620px) { .an-controls { padding:14px !important; } .an-control-grid { grid-template-columns:1fr; } .an-control-grid select,.an-control-grid input { font-size:16px; } .an-stats { grid-template-columns:1fr 1fr; } .an-metric strong { font-size:15px; } .an-card-head { flex-direction:column; } .an-chart { height:250px; margin-left:-8px; } .an-factor-list article { align-items:flex-start; flex-direction:column; } .an-correlation { min-width:0; text-align:left; } }
+  @media (max-width:900px) { .an-control-grid { grid-template-columns:1fr 1fr; } .an-picker-field { grid-column:1/-1; } .an-main-grid { grid-template-columns:1fr; } }
+  @media (max-width:620px) { .an-controls { padding:14px !important; } .an-control-grid { grid-template-columns:1fr; } .an-control-grid > label select,.an-control-grid > label input { font-size:16px; } .an-stats { grid-template-columns:1fr 1fr; } .an-metric strong { font-size:15px; } .an-card-head { flex-direction:column; } .an-chart { height:250px; margin-left:-8px; } .an-factor-list article { align-items:flex-start; flex-direction:column; } .an-correlation { min-width:0; text-align:left; } }
   @media (max-width:360px) { .an-stats { grid-template-columns:1fr; } }
 `;

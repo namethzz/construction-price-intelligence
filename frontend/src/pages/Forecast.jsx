@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from "react";
-import { ArrowDownRight, ArrowUpRight, CalendarRange, Database, Info, MapPin, PackageSearch, Search, Sparkles, TrendingUp } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, CalendarRange, Database, Info, MapPin, Sparkles, TrendingUp } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { materials, priceData } from "../data.js";
+import MaterialPicker from "../components/MaterialPicker.jsx";
 import { PageHeader } from "../components/Shared.jsx";
 
 const OFFICIAL_PRICE_URL = "https://index.tpso.go.th/construction-material-prices/prices-building-materials";
@@ -86,19 +87,8 @@ function modelUpdatedAt(material) {
 export default function Forecast() {
   const defaultMaterial = materials[0];
   const [selectedId, setSelectedId] = useState(defaultMaterial?.id ?? "");
-  const [search, setSearch] = useState("");
   const [horizonValue, setHorizonValue] = useState(1);
   const [horizonUnit, setHorizonUnit] = useState("year");
-
-  const filteredMaterials = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    const matches = (query
-      ? materials.filter((item) => [item?.id, item?.name, item?.category].some((value) => String(value ?? "").toLowerCase().includes(query)))
-      : materials
-    ).slice(0, 50);
-    const current = materials.find((item) => String(item.id) === String(selectedId));
-    return current && !matches.some((item) => String(item.id) === String(current.id)) ? [current, ...matches.slice(0, 49)] : matches;
-  }, [search, selectedId]);
 
   const selected = useMemo(() => materials.find((item) => String(item.id) === String(selectedId)) || materials[0], [selectedId]);
   const horizonMonths = Math.max(0, Math.round((numeric(horizonValue) ?? 0) * (horizonUnit === "year" ? 12 : 1)));
@@ -139,8 +129,7 @@ export default function Forecast() {
       <section className="card fc-controls">
         <div className="fc-section-head"><div className="fc-step">1</div><div><h2>เลือกวัสดุและช่วงเวลา</h2><p>ระยะเวลาไม่จำกัดเฉพาะ 12 เดือน</p></div></div>
         <div className="fc-control-grid">
-          <label className="fc-field"><span>ค้นหาวัสดุ</span><div><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ชื่อ รหัส หรือหมวดวัสดุ" /></div></label>
-          <label className="fc-field"><span>วัสดุที่ต้องการพยากรณ์</span><div><PackageSearch size={17} /><select value={selected?.id ?? ""} onChange={(event) => setSelectedId(event.target.value)}>{filteredMaterials.map((item) => <option key={item.id} value={item.id}>{item.id} — {item.name}</option>)}</select></div></label>
+          <div className="fc-picker-field"><MaterialPicker materials={materials} value={selected?.id ?? ""} onChange={setSelectedId} label="วัสดุที่ต้องการพยากรณ์" /></div>
           <label className="fc-field"><span>พื้นที่วิเคราะห์</span><div className="readonly"><MapPin size={17} /><strong>กรุงเทพมหานคร (อ้างอิงราคาส่วนกลาง)</strong></div></label>
           <div className="fc-field"><span>ต้องการดูราคาในอีก</span><div className="fc-period"><CalendarRange size={17} /><input inputMode="numeric" type="number" min="0" step="1" value={horizonValue} onChange={(event) => setHorizonValue(event.target.value)} /><select value={horizonUnit} onChange={(event) => setHorizonUnit(event.target.value)}><option value="month">เดือน</option><option value="year">ปี</option></select></div></div>
         </div>
@@ -186,9 +175,9 @@ const FORECAST_STYLES = `
   .fc-notice { display:flex; align-items:flex-start; gap:10px; margin-bottom:16px; padding:12px 14px; border-radius:12px; font-size:11px; line-height:1.55; }
   .fc-notice.ready { background:rgba(5,150,105,.07); color:#047857; } .fc-notice.waiting { background:rgba(217,119,6,.07); color:#92400e; }
   .fc-notice svg { flex:0 0 auto; margin-top:2px; } .fc-notice strong,.fc-notice span { display:block; } .fc-notice span { margin-top:2px; opacity:.78; }
-  .fc-controls { margin-bottom:16px; } .fc-section-head { display:flex; align-items:flex-start; gap:10px; margin-bottom:15px; } .fc-step { width:32px; height:32px; display:grid; place-items:center; flex:0 0 auto; border-radius:9px; background:#2563eb; color:#fff; font-weight:800; }
+  .fc-controls { margin-bottom:16px; overflow:visible; } .fc-section-head { display:flex; align-items:flex-start; gap:10px; margin-bottom:15px; } .fc-step { width:32px; height:32px; display:grid; place-items:center; flex:0 0 auto; border-radius:9px; background:#2563eb; color:#fff; font-weight:800; }
   .fc-section-head h2 { margin:0 0 3px; font-size:16px; } .fc-section-head p { margin:0; font-size:10px; opacity:.5; }
-  .fc-control-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:11px; } .fc-field { min-width:0; } .fc-field > span { display:block; margin-bottom:6px; font-size:10px; font-weight:700; opacity:.58; }
+  .fc-control-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:11px; } .fc-picker-field { grid-column:1/-1; min-width:0; } .fc-field { min-width:0; } .fc-field > span { display:block; margin-bottom:6px; font-size:10px; font-weight:700; opacity:.58; }
   .fc-field > div { min-height:46px; display:flex; align-items:center; gap:8px; padding:0 11px; border:1px solid rgba(148,163,184,.24); border-radius:10px; background:rgba(148,163,184,.035); }
   .fc-field svg { flex:0 0 auto; opacity:.55; } .fc-field input,.fc-field select { width:100%; min-width:0; border:0; outline:0; background:transparent; color:inherit; font:inherit; } .fc-field .readonly { opacity:.72; }
   .fc-field .fc-period input { max-width:130px; font-size:17px; font-weight:800; } .fc-field .fc-period select { width:auto; min-width:78px; padding-left:10px; border-left:1px solid rgba(148,163,184,.2); }

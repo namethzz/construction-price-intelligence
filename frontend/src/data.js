@@ -91,16 +91,19 @@ export function getMaterialById(id) {
 
 export function searchMaterials(
   query = "",
-  limit = 50
+  limit = materialCatalog.length
 ) {
   const text = String(query)
     .trim()
     .toLocaleLowerCase("th-TH");
 
-  const max = Math.max(
-    1,
-    Number(limit) || 50
-  );
+  const parsedLimit = Number(limit);
+
+  const max =
+    Number.isFinite(parsedLimit) &&
+    parsedLimit > 0
+      ? Math.floor(parsedLimit)
+      : materialCatalog.length;
 
   if (!text) {
     return materialCatalog.slice(0, max);
