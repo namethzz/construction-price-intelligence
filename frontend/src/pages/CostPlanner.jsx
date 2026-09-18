@@ -637,6 +637,8 @@ export default function CostPlanner() {
   const [savedAt, setSavedAt] = useState(initialDraft?.savedAt || "");
   const [saveStatus, setSaveStatus] = useState(initialDraft?.savedAt ? "saved" : "idle");
   const importRef = useRef(null);
+  const summaryRef = useRef(null);
+  const [summaryInView, setSummaryInView] = useState(false);
   const initialTracking = useRef(true);
 
   useEffect(() => {
@@ -646,6 +648,14 @@ export default function CostPlanner() {
     }
     setSaveStatus("unsaved");
   }, [rows, project, priceMode, forecastValue, forecastUnit, rates, selectedTemplate]);
+
+  useEffect(() => {
+    const node = summaryRef.current;
+    if (!node || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(([entry]) => setSummaryInView(entry.isIntersecting));
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   const requestedForecastMonths = Math.max(
     1,
@@ -1037,6 +1047,7 @@ export default function CostPlanner() {
         : differencePercent >= 4
           ? "ปานกลาง"
           : "ต่ำ";
+  const showMobileTotalBar = activeRows.length > 0 && !summaryInView;
 
   return (
     <>
@@ -1099,7 +1110,7 @@ export default function CostPlanner() {
           <TextField label="วันที่ประมาณราคา" type="date" value={project.estimateDate} onChange={(value) => setProject({ ...project, estimateDate: value })} />
           <TextField label="พื้นที่อาคาร" type="number" value={project.buildingArea} suffix="ตร.ม." onChange={(value) => setProject({ ...project, buildingArea: optionalNumber(value) })} />
         </div>
-        <label className="boq-textarea-field"><span>รายการที่ไม่รวมในราคา <small>หนึ่งรายการต่อหนึ่งบรรทัด</small></span><textarea rows="3" value={project.exclusions} onChange={(event) => setProject({ ...project, exclusions: event.target.value })} /></label>
+        <label className="boq-textarea-field"><span>รายการที่ไม่รวมในราคา <small>หนึ่งรายการต่อหนึ่งบรรทัด</small></span><textarea rows="4" value={project.exclusions} onChange={(event) => setProject({ ...project, exclusions: event.target.value })} /></label>
       </section>
 
       <section className="card boq-template-card">
@@ -1193,7 +1204,7 @@ export default function CostPlanner() {
           })}
         </main>
 
-        <aside className="boq-summary-wrap" id="boq-summary">
+        <aside className="boq-summary-wrap" id="boq-summary" ref={summaryRef}>
           <div className="boq-summary">
             <div className="boq-summary-step"><b>✓</b><span>ตรวจราคาและสรุปผล</span></div>
             <div className="eyebrow">CONSTRUCTION COST ESTIMATE</div>
@@ -1234,7 +1245,7 @@ export default function CostPlanner() {
         </aside>
       </div>
 
-      <section className="card boq-insights">
+      <section className={`card boq-insights ${showMobileTotalBar ? "has-mobile-bar" : ""}`}>
         <div className="boq-insight-grid">
           <InsightCard icon={<Calculator size={17} />} label={`ต้นทุนตรง • ${selectedPriceLabel}`} value={selectedDirect === null ? "รอข้อมูล" : `฿${formatPrice(selectedDirect)}`} />
           <InsightCard icon={<CalendarRange size={17} />} label={`รวมโครงการ • ${selectedDateLabel}`} value={optionalPrice(selectedSummary?.grandTotal)} />
@@ -1243,10 +1254,12 @@ export default function CostPlanner() {
         </div>
       </section>
 
-      <div className="boq-mobile-total-bar">
-        <div><span>{selectedPriceLabel}</span><strong>{optionalPrice(selectedSummary?.grandTotal)}</strong></div>
-        <button type="button" onClick={() => document.getElementById("boq-summary")?.scrollIntoView({ behavior: "smooth" })}>ดูสรุป <ChevronUp size={16} /></button>
-      </div>
+      {showMobileTotalBar && (
+        <div className="boq-mobile-total-bar">
+          <div><span>{selectedPriceLabel}</span><strong>{optionalPrice(selectedSummary?.grandTotal)}</strong></div>
+          <button type="button" onClick={() => document.getElementById("boq-summary")?.scrollIntoView({ behavior: "smooth", block: "start" })}>ดูสรุป <ChevronUp size={16} /></button>
+        </div>
+      )}
     </>
   );
 }
@@ -1255,7 +1268,7 @@ function TextField({ label, value, onChange, placeholder = "", icon = null, type
   return (
     <label className="boq-field">
       <span>{icon}{label}</span>
-      <div className="boq-field-control">
+      <div className={`boq-field-control${suffix ? " has-suffix" : ""}`}>
         <input type={type} value={value ?? ""} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
         {suffix && <em>{suffix}</em>}
       </div>
@@ -1680,9 +1693,19 @@ const BOQ_STYLES = `
   .boq-horizon-field select:focus,
   .boq-rate-field input:focus,
   .boq-cell-input:focus { border-color: #4ba994; box-shadow: 0 0 0 3px rgba(8, 119, 100, .11); }
-  .boq-field-control { position: relative; }
-  .boq-field-control input { padding-right: 72px; }
+  .boq-field-control { position: relative; min-width: 0; }
+  .boq-field-control.has-suffix input { padding-right: 72px; }
   .boq-field-control em { position: absolute; top: 50%; right: 10px; transform: translateY(-50%); color: var(--boq-muted); font-size: 10px; font-style: normal; font-weight: 600; pointer-events: none; }
+  .boq-field input[type="date"] {
+    -webkit-appearance: none;
+    appearance: none;
+    min-width: 0;
+    max-width: 100%;
+    font-weight: 500;
+    text-align: left;
+  }
+  .boq-field input[type="date"]::-webkit-date-and-time-value { margin: 0; text-align: left; }
+  .boq-field input[type="date"]::-webkit-calendar-picker-indicator { margin-left: 0; padding: 0; }
   .boq-textarea-field { display: grid; gap: 6px; margin-top: 13px; color: var(--boq-ink); font-size: 12px; font-weight: 700; }
   .boq-textarea-field span { display: flex; gap: 6px; align-items: baseline; }
   .boq-textarea-field small { color: var(--boq-muted); font-weight: 500; }
@@ -1725,7 +1748,7 @@ const BOQ_STYLES = `
   .boq-price-mode-grid > button { min-height: 98px; }
   .boq-horizon-field { display: grid; align-content: center; gap: 7px; padding: 12px 14px; border: 1px solid #bcdcd4; border-radius: 13px; color: var(--boq-ink); background: #f5fbf9; }
   .boq-horizon-field > span { font-size: 11px; font-weight: 700; }
-  .boq-horizon-field > div { display: grid; grid-template-columns: 1fr 100px; }
+  .boq-horizon-field > div { display: grid; grid-template-columns: minmax(0, 1fr) 100px; }
   .boq-horizon-field input, .boq-horizon-field select { height: 42px; padding: 0 10px; border-radius: 9px 0 0 9px; font-size: 16px; font-weight: 800; text-align: center; }
   .boq-horizon-field select { border-left: 0; border-radius: 0 9px 9px 0; font-size: 13px; }
   .boq-horizon-field small { color: var(--boq-green-dark); font-size: 10px; font-weight: 700; }
@@ -1845,7 +1868,7 @@ const BOQ_STYLES = `
   .boq-add-row { display: flex; align-items: center; justify-content: center; gap: 6px; width: calc(100% - 20px); min-height: 38px; margin: 10px; border: 1px dashed #8cc6b9; border-radius: 9px; color: var(--boq-green); background: #f7fcfb; font: inherit; font-size: 11px; font-weight: 800; cursor: pointer; }
   .boq-add-row:hover { background: var(--boq-green-soft); }
 
-  .boq-summary-wrap { position: sticky; top: 14px; }
+  .boq-summary-wrap { position: sticky; top: 14px; scroll-margin-top: 14px; }
   .boq-summary { padding: 17px; border: 1px solid #bddbd4; border-radius: 16px; background: linear-gradient(180deg, #f4fbf9 0%, #fff 42%); box-shadow: 0 12px 32px rgba(13, 83, 70, .1); }
   .boq-summary-step { display: flex; align-items: center; gap: 7px; margin-bottom: 13px; color: var(--boq-green-dark); font-size: 10px; font-weight: 800; }
   .boq-summary-step b { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; color: #fff; background: var(--boq-green); }
@@ -1904,7 +1927,7 @@ const BOQ_STYLES = `
     .boq-flow span { display: none; }
     .boq-flow > i { width: 50px; }
     .boq-project-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .boq-layout { grid-template-columns: 1fr; }
+    .boq-layout { grid-template-columns: minmax(0, 1fr); }
     .boq-summary-wrap { position: static; }
     .boq-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
     .boq-summary-step, .boq-summary .eyebrow, .boq-summary h3, .boq-grand-total, .boq-summary-caption, .boq-validation, .boq-download-full { grid-column: 1 / -1; }
@@ -1923,9 +1946,10 @@ const BOQ_STYLES = `
     .boq-setup-card, .boq-template-card, .boq-price-mode-card, .boq-work-toolbar, .boq-insights { padding: 15px; border-radius: 14px; }
     .boq-step-head { margin-bottom: 14px; }
     .boq-step-head h2 { font-size: 15px; }
-    .boq-project-grid { grid-template-columns: 1fr; gap: 11px; }
+    .boq-project-grid { grid-template-columns: minmax(0, 1fr); gap: 11px; }
     .boq-field input, .boq-field select { height: 46px; font-size: 16px; }
     .boq-field textarea, .boq-textarea-field textarea { font-size: 16px; }
+    .boq-textarea-field textarea { min-height: 112px; }
     .boq-template-grid { grid-template-columns: 1fr; }
     .boq-template-grid > button { min-height: 82px; }
     .boq-template-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1973,7 +1997,7 @@ const BOQ_STYLES = `
     .boq-row-details { padding: 13px 12px; }
     .boq-details-heading { align-items: flex-start; }
     .boq-details-heading > .boq-row-state { flex: 0 0 auto; }
-    .boq-detail-grid.identity, .boq-detail-grid.rates, .boq-detail-grid.rates.compact { grid-template-columns: 1fr; }
+    .boq-detail-grid.identity, .boq-detail-grid.rates, .boq-detail-grid.rates.compact { grid-template-columns: minmax(0, 1fr); }
     .boq-field.wide { grid-column: auto; }
     .boq-cost-type-block { align-items: stretch; flex-direction: column; }
     .boq-cost-type-buttons { display: grid; grid-template-columns: 1fr; }
@@ -1989,12 +2013,12 @@ const BOQ_STYLES = `
     .boq-grand-total { font-size: 25px; }
     .boq-insight-grid { grid-template-columns: 1fr; }
     .boq-insight-card { min-height: 48px; }
-    .boq-mobile-total-bar { position: fixed; z-index: 40; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); left: 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 57px; padding: 8px 8px 8px 13px; border: 1px solid #3a8f7d; border-radius: 15px; color: #fff; background: rgba(5, 91, 77, .96); box-shadow: 0 12px 34px rgba(7, 65, 55, .3); backdrop-filter: blur(10px); }
+    .boq-mobile-total-bar { position: fixed; z-index: 40; right: 10px; bottom: calc(16px + env(safe-area-inset-bottom)); left: 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 57px; padding: 8px 8px 8px 13px; border: 1px solid #3a8f7d; border-radius: 15px; color: #fff; background: rgba(5, 91, 77, .96); box-shadow: 0 12px 34px rgba(7, 65, 55, .3); backdrop-filter: blur(10px); }
     .boq-mobile-total-bar > div { display: grid; gap: 1px; min-width: 0; }
     .boq-mobile-total-bar span { overflow: hidden; color: #d7f1eb; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
     .boq-mobile-total-bar strong { overflow: hidden; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
     .boq-mobile-total-bar button { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; min-height: 41px; padding: 0 10px; border: 0; border-radius: 10px; color: var(--boq-green-dark); background: #fff; font: inherit; font-size: 10px; font-weight: 900; }
-    .boq-insights { margin-bottom: 82px; }
+    .boq-insights.has-mobile-bar { margin-bottom: 88px; }
   }
 
   @media (max-width: 390px) {
